@@ -30,6 +30,7 @@ function simple_csv_mailer_uninstall_site() {
 	global $wpdb;
 
 	delete_option( 'scm_storage_version' );
+	wp_unschedule_hook( 'scm_send' );
 	// Sending jobs, locks and notices have hashed or per-user names, so remove them by prefix.
 	$wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE 'scm\\_job\\_%' OR option_name LIKE '\\_transient\\_scm\\_%' OR option_name LIKE '\\_transient\\_timeout\\_scm\\_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 

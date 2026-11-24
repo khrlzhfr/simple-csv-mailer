@@ -4,7 +4,7 @@ Tags: email, bulk email, csv, mail merge, wp_mail
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -16,7 +16,7 @@ Simple CSV Mailer sends one email per row of a CSV file through WordPress's own 
 
 * **Merge tags** – every CSV column becomes a tag such as `%first_name%` that you can use in the subject, body and attachment URLs.
 * **Attachments** – one URL per line. Files on your site are read from disk; others are downloaded once and cached. A column can hold a different file for each person.
-* **Sending rate** – choose how many emails to send every so many seconds. Keep the tab open and it sends in batches.
+* **Background and scheduled sending** – choose how many emails to send every so many seconds, now or at a date and time. Sending runs in the background, so you can close the page.
 * **Test first** – send a test to yourself using the first recipient's data.
 * **Pause and resume** – each row gets an `email_status` (Sent, Skipped, Invalid or Failed) with a timestamp, so a paused list continues where it stopped.
 * **Retry failed** – make a new list from the rows that failed.
@@ -58,7 +58,11 @@ The plugin hands each email to `wp_mail()`. Delivery depends on your site's mail
 
 = Can I close the tab while sending? =
 
-Sending stops while the tab is closed. Open Tools → Mailer and select **Resume** under Paused to continue where it stopped.
+Yes. Sending runs in the background with WP-Cron, so you can close the page. Progress is shown under Queue on Tools → Mailer, with Pause, Resume and Cancel. You can also choose a date and time to send.
+
+= When does background sending run? =
+
+WP-Cron runs when someone visits the site, so on a quiet site a scheduled send can start late. For reliable timing, have a server cron job or an uptime monitor request `https://your-site/wp-cron.php` every few minutes. See [Hooking WP-Cron Into the System Task Scheduler](https://developer.wordpress.org/plugins/cron/hooking-wp-cron-into-the-system-task-scheduler/). Once a send has started, it carries on by itself at your chosen rate.
 
 = I used an earlier version. Where are my lists? =
 
@@ -66,12 +70,21 @@ Versions before 1.2.0 kept files in `wp-content/mailer/`. They are moved to `wp-
 
 == Changelog ==
 
+= 1.3.0 =
+* Sending runs in the background with WP-Cron, so the page no longer has to stay open.
+* Schedule a send for a date and time.
+* New Queue table with Pause, Resume and Cancel.
+* The person who started a send sees the result the next time they open Mailer.
+
 = 1.2.0 =
 * First public release as Simple CSV Mailer.
 * Files are now kept in the uploads folder; existing lists move there automatically.
 * All text can be translated.
 
 == Upgrade Notice ==
+
+= 1.3.0 =
+Background and scheduled sending. Lists paused in 1.2.0 appear under Queue; select Resume to finish them.
 
 = 1.2.0 =
 Lists move from wp-content/mailer to wp-content/uploads/mailer automatically.

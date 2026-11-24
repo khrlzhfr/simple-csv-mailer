@@ -3,20 +3,23 @@ defined( 'ABSPATH' ) || exit;
 
 /**
  * Tools → Mailer: send personalised emails to a CSV list in batches.
+ *
+ * Sending runs in the background through WP-Cron: each run sends batches at
+ * the chosen rate for up to RUN_FOR seconds, writes each result into the CSV's
+ * email_status column, then schedules the next run until every row has a status.
  */
 final class SCM_Mailer {
 
 	const CAP        = 'edit_others_posts'; // Editors and above.
 	const SLUG       = 'scm-mailer';
-	const MAX_BATCH  = 20;                  // Emails per page load, keeps under PHP time limits.
+	const MAX_BATCH  = 20;                  // Emails per batch.
+	const HOOK       = 'scm_send';          // WP-Cron event that sends one list; its argument is the file name.
+	const RUN_FOR    = 20;                  // Seconds of sending per background run, well under PHP time limits.
 	const MAX_UPLOAD = 5242880;             // 5 MB.
 	const MAX_ATTACH = 10485760;            // 10 MB per email.
 
 	/** Screen hook of Tools → Mailer. */
 	private static $hook = '';
-
-	/** Result of this request's sending batch, for the progress screen. */
-	private static $batch = null;
 
 	/** Lists that can be sent, cached for this request. */
 	private static $pending = null;
@@ -530,9 +533,12 @@ final class SCM_Mailer {
 		return add_query_arg( array_merge( [ 'page' => self::SLUG ], $args ), admin_url( 'tools.php' ) );
 	}
 
-	/** Stores a notice for the next page load. $html must already be escaped. */
-	public static function notice( $html, $type = 'success', $alert = '' ) {
-		set_transient( 'scm_notice_' . get_current_user_id(), [ $html, $type, $alert ], 60 );
+	/** Stores a notice for the user's next visit to Mailer. $html must already be escaped. */
+	public static function notice( $html, $type = 'success', $alert = '', $user = 0 ) {
+		$user = $user ? $user : get_current_user_id();
+		if ( $user ) {
+			set_transient( 'scm_notice_' . $user, [ $html, $type, $alert ], WEEK_IN_SECONDS );
+		}
 	}
 
 	private static function redirect( $url ) {
@@ -570,11 +576,6 @@ final class SCM_Mailer {
 			self::handle_post( sanitize_key( wp_unslash( $_POST['scm_action'] ) ) );
 			return;
 		}
-
-		if ( '' !== self::get( 'sending' ) ) {
-			check_admin_referer( 'scm_sending' );
-			self::sending_batch( basename( self::get( 'sending' ) ) );
-		}
 	}
 
 	public static function enqueue( $hook ) {
@@ -582,14 +583,6 @@ final class SCM_Mailer {
 			return;
 		}
 		wp_enqueue_style( 'scm-admin', plugins_url( 'assets/admin.css', SCM_FILE ), [], SCM_VERSION );
-
-		if ( null !== self::$batch ) {
-			if ( empty( self::$batch['error'] ) ) {
-				wp_enqueue_script( 'scm-sending', plugins_url( 'assets/sending.js', SCM_FILE ), [], SCM_VERSION, true );
-				wp_add_inline_script( 'scm-sending', 'window.scmSending = ' . wp_json_encode( [ 'seconds' => (int) self::$batch['seconds'] ] ) . ';', 'before' );
-			}
-			return;
-		}
 
 		$n    = get_transient( 'scm_notice_' . get_current_user_id() );
 		$data = [
@@ -602,6 +595,8 @@ final class SCM_Mailer {
 				'eta'     => __( '%1$s email(s) will be sent in approximately %2$s.', 'simple-csv-mailer' ),
 				/* translators: 1: number of recipients, 2: From address */
 				'confirm' => __( 'Send to %1$s recipient(s) from %2$s?', 'simple-csv-mailer' ),
+				/* translators: 1: number of recipients, 2: From address, 3: date and time */
+				'confirmAt' => __( 'Send to %1$s recipient(s) from %2$s at %3$s?', 'simple-csv-mailer' ),
 				'hour'    => __( 'hour', 'simple-csv-mailer' ),
 				'hours'   => __( 'hours', 'simple-csv-mailer' ),
 				'minute'  => __( 'minute', 'simple-csv-mailer' ),
@@ -644,7 +639,7 @@ final class SCM_Mailer {
 					)
 				),
 				'done'   => $sent,
-				'resume' => (bool) get_option( self::job_key( $n ) ),
+				'queued' => (bool) get_option( self::job_key( $n ) ),
 			];
 		}
 		return self::$pending;
@@ -699,6 +694,7 @@ final class SCM_Mailer {
 					wp_delete_file( $txt );
 				}
 				delete_option( self::job_key( $name ) );
+				wp_clear_scheduled_hook( self::HOOK, [ $name ] );
 				/* translators: %s: file name */
 				self::notice( esc_html( sprintf( __( 'Deleted %s.', 'simple-csv-mailer' ), $name ) ) );
 			}
@@ -729,6 +725,34 @@ final class SCM_Mailer {
 			update_user_meta( $uid, 'scm_last_file', $new );
 			/* translators: 1: file name, 2: number of rows */
 			self::notice( esc_html( sprintf( __( 'Created %1$s with %2$d failed rows. Select it under To and send again.', 'simple-csv-mailer' ), $new, count( $rows ) ) ) );
+			self::redirect( self::url() );
+		}
+
+		if ( in_array( $action, [ 'pause', 'resume', 'cancel' ], true ) ) {
+			$name = basename( self::post( 'file' ) );
+			$job  = get_option( self::job_key( $name ) );
+			if ( is_array( $job ) && self::path( $name ) ) {
+				if ( 'cancel' === $action ) {
+					delete_option( self::job_key( $name ) );
+					wp_clear_scheduled_hook( self::HOOK, [ $name ] );
+					/* translators: %s: file name */
+					self::notice( esc_html( sprintf( __( 'Cancelled %s. Rows already sent keep their status; the rest stay unsent.', 'simple-csv-mailer' ), $name ) ) );
+				} elseif ( 'pause' === $action ) {
+					$job['state'] = 'paused';
+					update_option( self::job_key( $name ), $job, false );
+					wp_clear_scheduled_hook( self::HOOK, [ $name ] );
+					/* translators: %s: file name */
+					self::notice( esc_html( sprintf( __( 'Paused %s. Emails already being sent finish first.', 'simple-csv-mailer' ), $name ) ) );
+				} else {
+					$job['state'] = 'sending';
+					unset( $job['error'] );
+					$job['send_at'] = 0;
+					update_option( self::job_key( $name ), $job, false );
+					self::schedule( $name );
+					/* translators: %s: file name */
+					self::notice( esc_html( sprintf( __( 'Resumed %s. It continues in the background.', 'simple-csv-mailer' ), $name ) ) );
+				}
+			}
 			self::redirect( self::url() );
 		}
 
@@ -774,54 +798,134 @@ final class SCM_Mailer {
 		}
 
 		if ( 'send' === $action ) {
-			if ( get_transient( self::lock_key( $job['file'] ) ) ) {
-				self::notice( esc_html__( 'This list is already being sent in another tab or by another user.', 'simple-csv-mailer' ), 'error' );
+			if ( get_option( self::job_key( $job['file'] ) ) ) {
+				self::notice( esc_html__( 'This list is already queued. Pause or cancel it under Queue first.', 'simple-csv-mailer' ), 'error' );
 				self::redirect( self::url() );
+			}
+			$when = 0;
+			if ( 'later' === self::post( 'when' ) ) {
+				$at = self::post( 'send_at' );
+				try {
+					$when = ( new DateTimeImmutable( $at, wp_timezone() ) )->getTimestamp();
+				} catch ( Exception $e ) {
+					$when = 0;
+				}
+				if ( '' === $at || ! $when ) {
+					self::notice( esc_html__( 'Choose a date and time to send, or select Now.', 'simple-csv-mailer' ), 'error' );
+					self::redirect( self::url() );
+				}
 			}
 			$job['started'] = self::now();
 			$job['user']    = $uid;
+			$job['send_at'] = $when > time() ? $when : 0;
+			$job['state']   = $job['send_at'] ? 'scheduled' : 'sending';
 			update_option( self::job_key( $job['file'] ), $job, false );
-			self::redirect( self::sending_url( $job['file'] ) );
+			self::schedule( $job['file'], $job['send_at'] );
+
+			if ( $job['send_at'] ) {
+				/* translators: 1: file name, 2: date and time */
+				self::notice( esc_html( sprintf( __( '%1$s will be sent from %2$s. You can close this page.', 'simple-csv-mailer' ), $job['file'], wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $job['send_at'] ) ) ) );
+			} else {
+				/* translators: %s: file name */
+				self::notice( esc_html( sprintf( __( 'Sending %s in the background. You can close this page; progress is shown under Queue.', 'simple-csv-mailer' ), $job['file'] ) ) );
+			}
+			self::redirect( self::url() );
 		}
 
 		self::redirect( self::url() );
 	}
 
-	private static function sending_url( $file ) {
-		return self::url(
+	/* ---------- Background sending ---------- */
+
+	/** Queues a list: now, or at $when (a Unix time). */
+	public static function schedule( $file, $when = 0 ) {
+		wp_clear_scheduled_hook( self::HOOK, [ $file ] );
+		wp_schedule_single_event( max( time(), (int) $when ), self::HOOK, [ $file ] );
+		if ( (int) $when <= time() ) {
+			self::kick();
+		}
+	}
+
+	/** After this request ends, request wp-cron.php (as an external cron would), so sending starts or continues without waiting for the next visit. */
+	public static function kick() {
+		static $added = false;
+		if ( ! $added ) {
+			$added = true;
+			add_action( 'shutdown', [ __CLASS__, 'request_cron' ], 100 );
+		}
+	}
+
+	/** Runs at shutdown, after wp-cron.php has released its lock. Doesn't wait for the reply. */
+	public static function request_cron() {
+		wp_remote_get(
+			site_url( 'wp-cron.php' ),
 			[
-				'sending'  => $file,
-				'_wpnonce' => wp_create_nonce( 'scm_sending' ),
+				'timeout'   => 0.01,
+				'blocking'  => false,
+				'sslverify' => false, // A request to this same site, as WordPress itself makes for WP-Cron.
 			]
 		);
 	}
 
-	/** Runs one batch for the progress screen, or finishes the job and redirects. */
-	private static function sending_batch( $file ) {
-		$job = get_option( self::job_key( $file ) );
-		if ( ! $job || ! self::path( $file ) ) {
-			self::$batch = [ 'error' => __( 'No sending job for this file.', 'simple-csv-mailer' ) ];
+	/** WP-Cron handler: sends one list for up to RUN_FOR seconds, then queues the next run. */
+	public static function background_run( $file ) {
+		$file = basename( (string) $file );
+		$job  = get_option( self::job_key( $file ) );
+		if ( ! is_array( $job ) || ! self::path( $file ) ) {
+			return;
+		}
+		if ( 'paused' === ( $job['state'] ?? '' ) ) {
 			return;
 		}
 
-		// One tab at a time: the tab holding the lock keeps a matching cookie.
-		$lock  = self::lock_key( $file );
-		$token = get_transient( $lock );
-		$mine  = isset( $_COOKIE['scm_tab'] ) ? sanitize_key( wp_unslash( $_COOKIE['scm_tab'] ) ) : '';
-		if ( $token && $token !== $mine ) {
-			self::$batch = [ 'error' => __( 'This list is already being sent in another tab. Close the other tab, wait a minute, then resume.', 'simple-csv-mailer' ) ];
+		// One run per list at a time.
+		$lock = self::lock_key( $file );
+		if ( get_transient( $lock ) ) {
 			return;
 		}
-		if ( ! $token ) {
-			$mine = strtolower( wp_generate_password( 12, false ) );
-			setcookie( 'scm_tab', $mine, [ 'path' => '/', 'secure' => is_ssl(), 'httponly' => true, 'samesite' => 'Strict' ] );
-		}
-		set_transient( $lock, $mine, $job['seconds'] + 60 );
+		set_transient( $lock, 1, self::RUN_FOR + (int) $job['seconds'] + 60 );
 
-		$res = self::run_batch( $job );
-		if ( ! $res ) {
+		// Keep the rate across runs: the next batch is due seconds after the previous one.
+		$wait = (int) ( $job['next_at'] ?? 0 ) - time();
+		if ( $wait > self::RUN_FOR ) {
 			delete_transient( $lock );
-			self::$batch = [ 'error' => __( 'Could not read the CSV.', 'simple-csv-mailer' ) ];
+			self::schedule( $file, (int) $job['next_at'] );
+			return;
+		}
+		if ( $wait > 0 ) {
+			sleep( $wait );
+		}
+
+		if ( 'sending' !== ( $job['state'] ?? '' ) ) {
+			$job['state'] = 'sending';
+			update_option( self::job_key( $file ), $job, false );
+		}
+
+		$started = time();
+		$res     = null;
+		while ( true ) {
+			$res            = self::run_batch( $job );
+			$job['next_at'] = time() + (int) $job['seconds'];
+			if ( ! $res || $res['done'] ) {
+				break;
+			}
+			// Paused or cancelled from the Mailer screen while this run was going.
+			$now = get_option( self::job_key( $file ) );
+			if ( ! is_array( $now ) || 'paused' === ( $now['state'] ?? '' ) ) {
+				delete_transient( $lock );
+				return;
+			}
+			if ( time() - $started + (int) $job['seconds'] > self::RUN_FOR ) {
+				break;
+			}
+			sleep( (int) $job['seconds'] );
+		}
+		delete_transient( $lock );
+
+		if ( ! $res ) {
+			$job['state'] = 'paused';
+			$job['error'] = __( 'The CSV could not be read.', 'simple-csv-mailer' );
+			update_option( self::job_key( $file ), $job, false );
 			return;
 		}
 
@@ -833,18 +937,39 @@ final class SCM_Mailer {
 				/* translators: %d: number of failed rows */
 				$msg .= ' ' . sprintf( __( '(%d failed: use "Retry failed" under Completed)', 'simple-csv-mailer' ), $res['failed'] );
 			}
-			self::notice( esc_html( $msg ), 'success', $msg );
-			self::redirect( self::url() );
+			self::notice( esc_html( $msg ), 'success', '', (int) ( $job['user'] ?? 0 ) );
+			return;
 		}
 
-		self::$batch = array_merge(
-			$res,
-			[
-				'file'    => $file,
-				'seconds' => (int) $job['seconds'],
-				'eta'     => (int) ceil( $res['remaining'] / $job['count'] ) * $job['seconds'],
-			]
-		);
+		// Queue the next run. Short gaps: start it right after this request (it waits out the gap itself).
+		// Longer gaps: it runs at the next WP-Cron trigger after the batch is due.
+		$current = get_option( self::job_key( $file ) );
+		if ( ! is_array( $current ) || 'paused' === ( $current['state'] ?? '' ) ) {
+			return;
+		}
+		$current['next_at'] = $job['next_at'];
+		$current['state']   = 'sending';
+		update_option( self::job_key( $file ), $current, false );
+		self::schedule( $file, (int) $job['seconds'] <= self::RUN_FOR ? 0 : $job['next_at'] );
+	}
+
+	/** Lists with a sending job: scheduled, sending or paused. */
+	private static function jobs() {
+		$out = [];
+		foreach ( self::files( false ) as $n ) {
+			$job = get_option( self::job_key( $n ) );
+			if ( ! is_array( $job ) ) {
+				continue;
+			}
+			// Jobs from 1.2.0 (sent from an open tab) have no state: treat them as paused.
+			$job['state'] = $job['state'] ?? 'paused';
+			// A job whose next run went missing (for example the plugin was deactivated): queue it again.
+			if ( 'paused' !== $job['state'] && ! wp_next_scheduled( self::HOOK, [ $n ] ) && ! get_transient( self::lock_key( $n ) ) ) {
+				self::schedule( $n, (int) ( $job['send_at'] ?? 0 ) );
+			}
+			$out[ $n ] = $job;
+		}
+		return $out;
 	}
 
 	public static function duration( $s ) {
@@ -875,31 +1000,7 @@ final class SCM_Mailer {
 			wp_die( esc_html__( 'Sorry, you are not allowed to do this.', 'simple-csv-mailer' ) );
 		}
 		self::ensure_dir();
-		if ( null !== self::$batch ) {
-			self::sending_page();
-			return;
-		}
 		self::main_page();
-	}
-
-	private static function sending_page() {
-		$b = self::$batch;
-		echo '<div class="wrap"><h1>' . esc_html__( 'Mailer: sending', 'simple-csv-mailer' ) . '</h1>';
-		if ( isset( $b['error'] ) ) {
-			echo '<p>' . esc_html( $b['error'] ) . '</p><p><a href="' . esc_url( self::url() ) . '">' . esc_html__( 'Back to Mailer', 'simple-csv-mailer' ) . '</a></p></div>';
-			return;
-		}
-		printf( '<p><strong>%s</strong></p>', esc_html( $b['file'] ) );
-		/* translators: 1: emails sent in this round, 2: emails remaining, 3: time left */
-		echo '<p>' . esc_html( sprintf( __( 'Sent %1$d in this round. %2$d remaining, about %3$s left.', 'simple-csv-mailer' ), $b['sent'], $b['remaining'], self::duration( $b['eta'] ) ) ) . '</p>';
-		/* translators: %d: seconds between batches */
-		echo '<p>' . esc_html( sprintf( _n( 'Keep this tab open. It reloads every %d second.', 'Keep this tab open. It reloads every %d seconds.', $b['seconds'], 'simple-csv-mailer' ), $b['seconds'] ) ) . '</p>';
-		printf(
-			'<p><a class="button" href="%s" onclick="return confirm(%s)">%s</a></p></div>',
-			esc_url( self::url() ),
-			esc_attr( wp_json_encode( __( 'Pause sending? You can resume from Mailer.', 'simple-csv-mailer' ) ) ),
-			esc_html__( 'Pause', 'simple-csv-mailer' )
-		);
 	}
 
 	private static function main_page() {
@@ -921,7 +1022,8 @@ final class SCM_Mailer {
 			]
 		);
 		$last    = get_user_meta( $uid, 'scm_last_file', true );
-		$pending = self::pending();
+		$jobs    = self::jobs();
+		$pending = array_diff_key( self::pending(), $jobs ); // Lists in the queue can't be sent again until they finish or are cancelled.
 		$domain  = self::domain();
 
 		$n = get_transient( 'scm_notice_' . $uid );
@@ -974,7 +1076,7 @@ final class SCM_Mailer {
 						<th scope="row"><label for="scm-file"><?php esc_html_e( 'To', 'simple-csv-mailer' ); ?></label></th>
 						<td>
 							<?php if ( ! $pending ) : ?>
-								<p><?php esc_html_e( 'No CSV uploaded yet.', 'simple-csv-mailer' ); ?></p>
+								<p><?php echo $jobs ? esc_html__( 'Every uploaded list is in the queue below. Upload another CSV to send something else.', 'simple-csv-mailer' ) : esc_html__( 'No CSV uploaded yet.', 'simple-csv-mailer' ); ?></p>
 							<?php else : ?>
 								<select name="file" id="scm-file" required>
 									<?php foreach ( $pending as $name => $info ) : ?>
@@ -1075,37 +1177,72 @@ final class SCM_Mailer {
 							<p class="description" id="scm-eta"></p>
 						</td>
 					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'When', 'simple-csv-mailer' ); ?></th>
+						<td>
+							<fieldset>
+								<legend class="screen-reader-text"><?php esc_html_e( 'When', 'simple-csv-mailer' ); ?></legend>
+								<label><input type="radio" name="when" value="now" checked> <?php esc_html_e( 'Now', 'simple-csv-mailer' ); ?></label><br>
+								<label><input type="radio" name="when" value="later" id="scm-later"> <?php esc_html_e( 'At', 'simple-csv-mailer' ); ?></label>
+								<label class="screen-reader-text" for="scm-send-at"><?php esc_html_e( 'Date and time', 'simple-csv-mailer' ); ?></label>
+								<input type="datetime-local" name="send_at" id="scm-send-at" min="<?php echo esc_attr( wp_date( 'Y-m-d\TH:i' ) ); ?>">
+							</fieldset>
+							<p class="description">
+								<?php
+								/* translators: %s: site time zone, e.g. Asia/Kuala_Lumpur or UTC+8 */
+								echo esc_html( sprintf( __( 'Time zone: %s (Settings → General). Sending runs in the background, so you can close this page.', 'simple-csv-mailer' ), wp_timezone_string() ) );
+								?>
+							</p>
+						</td>
+					</tr>
 				</table>
 				<p class="submit"><button class="button button-primary" data-action="send"><?php esc_html_e( 'Send', 'simple-csv-mailer' ); ?></button></p>
 			</form>
 
-			<?php
-			$resumable = array_filter(
-				$pending,
-				static function ( $i ) {
-					return $i['resume'];
-				}
-			);
-			if ( $resumable ) :
-				?>
-				<h2><?php esc_html_e( 'Paused', 'simple-csv-mailer' ); ?></h2>
+			<?php if ( $jobs ) : ?>
+				<h2><?php esc_html_e( 'Queue', 'simple-csv-mailer' ); ?></h2>
 				<table class="widefat striped">
-					<thead><tr><th><?php esc_html_e( 'File', 'simple-csv-mailer' ); ?></th><th><?php esc_html_e( 'Progress', 'simple-csv-mailer' ); ?></th><th></th></tr></thead>
+					<thead><tr><th><?php esc_html_e( 'File', 'simple-csv-mailer' ); ?></th><th><?php esc_html_e( 'Status', 'simple-csv-mailer' ); ?></th><th><?php esc_html_e( 'Progress', 'simple-csv-mailer' ); ?></th><th></th></tr></thead>
 					<tbody>
-					<?php foreach ( $resumable as $name => $info ) : ?>
+					<?php
+					$all = self::pending();
+					foreach ( $jobs as $name => $job ) :
+						$info = $all[ $name ] ?? [
+							'done'  => 0,
+							'count' => 0,
+						];
+						if ( 'paused' === $job['state'] ) {
+							$status = __( 'Paused', 'simple-csv-mailer' );
+							if ( ! empty( $job['error'] ) ) {
+								$status .= ': ' . $job['error'];
+							}
+						} elseif ( 'scheduled' === $job['state'] && ! empty( $job['send_at'] ) && $job['send_at'] > time() ) {
+							/* translators: %s: date and time */
+							$status = sprintf( __( 'Scheduled for %s', 'simple-csv-mailer' ), wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), (int) $job['send_at'] ) );
+						} else {
+							/* translators: 1: number of emails, 2: duration */
+							$status = sprintf( __( 'Sending, %1$s every %2$s', 'simple-csv-mailer' ), (int) $job['count'], self::duration( (int) $job['seconds'] ) );
+						}
+						$act = 'paused' === $job['state'] ? 'resume' : 'pause';
+						?>
 						<tr>
-							<td><?php echo esc_html( $name ); ?></td>
+							<td><?php echo esc_html( $name ); ?><br><span class="description"><?php echo esc_html( $job['subject'] ); ?></span></td>
+							<td><?php echo esc_html( $status ); ?></td>
 							<td>
 								<?php
 								/* translators: 1: rows processed, 2: total recipients */
 								echo esc_html( sprintf( __( '%1$d of %2$d processed', 'simple-csv-mailer' ), $info['done'], $info['count'] ) );
 								?>
 							</td>
-							<td><a class="button" href="<?php echo esc_url( self::sending_url( $name ) ); ?>"><?php esc_html_e( 'Resume', 'simple-csv-mailer' ); ?></a></td>
+							<td class="scm-actions">
+								<form method="post" class="scm-inline"><?php wp_nonce_field( 'scm_form' ); ?><input type="hidden" name="scm_action" value="<?php echo esc_attr( $act ); ?>"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button button-small"><?php echo 'resume' === $act ? esc_html__( 'Resume', 'simple-csv-mailer' ) : esc_html__( 'Pause', 'simple-csv-mailer' ); ?></button></form>
+								<form method="post" class="scm-inline" onsubmit="return confirm(<?php echo esc_attr( wp_json_encode( __( 'Cancel sending this list? Rows already sent keep their status.', 'simple-csv-mailer' ) ) ); ?>)"><?php wp_nonce_field( 'scm_form' ); ?><input type="hidden" name="scm_action" value="cancel"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button-link button-link-delete"><?php esc_html_e( 'Cancel', 'simple-csv-mailer' ); ?></button></form>
+							</td>
 						</tr>
 					<?php endforeach; ?>
 					</tbody>
 				</table>
+				<p class="description"><?php esc_html_e( 'Reload this page to see the latest progress.', 'simple-csv-mailer' ); ?></p>
 			<?php endif; ?>
 
 			<h2><?php esc_html_e( 'Completed', 'simple-csv-mailer' ); ?></h2>
@@ -1168,7 +1305,7 @@ final class SCM_Mailer {
 				</table>
 			<?php endif; ?>
 
-			<?php if ( $pending ) : ?>
+			<?php if ( self::pending() ) : ?>
 				<form method="post" onsubmit="return confirm(<?php echo esc_attr( wp_json_encode( __( 'Delete this list?', 'simple-csv-mailer' ) ) ); ?>)">
 					<?php wp_nonce_field( 'scm_form' ); ?>
 					<input type="hidden" name="scm_action" value="delete">
@@ -1177,7 +1314,7 @@ final class SCM_Mailer {
 							<th scope="row"><label for="scm-del"><?php esc_html_e( 'Delete an unsent list', 'simple-csv-mailer' ); ?></label></th>
 							<td>
 								<select name="file" id="scm-del">
-									<?php foreach ( array_keys( $pending ) as $name ) : ?>
+									<?php foreach ( array_keys( self::pending() ) as $name ) : ?>
 										<option value="<?php echo esc_attr( $name ); ?>"><?php echo esc_html( $name ); ?></option>
 									<?php endforeach; ?>
 								</select>

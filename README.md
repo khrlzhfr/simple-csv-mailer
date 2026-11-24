@@ -1,12 +1,12 @@
 # Simple CSV Mailer
 
-By [Khairil Zhafri](https://khrlzh.fr). Version 1.2.0. Requires WordPress 6.4+ and PHP 7.4+. Folder, main file and text domain: `simple-csv-mailer`.
+By [Khairil Zhafri](https://khrlzh.fr). Version 1.3.0. Requires WordPress 6.4+ and PHP 7.4+. Folder, main file and text domain: `simple-csv-mailer`.
 
 Send personalised emails to a CSV list using `wp_mail()`, from **Tools → Mailer**. Editors and administrators can use it.
 
 - **Merge tags:** every CSV column becomes a tag such as `%first_name%` for the subject, body and attachment URLs.
 - **Attachments:** one URL per line; site files are read from disk, others downloaded once and cached. Up to 10 MB per email.
-- **Sending rate:** how many emails every so many seconds. Keep the tab open and it sends in batches.
+- **Background and scheduled sending:** how many emails every so many seconds, now or at a date and time. Runs in the background with WP-Cron, so the page can be closed.
 - **Test, pause, resume, retry:** each row gets an `email_status` with a timestamp, so a paused list continues where it stopped, and failed rows can be sent again.
 - **Records:** finished lists are renamed `completed_…` with a copy of the email saved alongside.
 
@@ -37,7 +37,17 @@ Versions before 1.2.0 used `wp-content/mailer/`; it is moved automatically.
 
 Deleting the plugin removes its jobs, drafts and the `uploads/mailer` folder from every site.
 
+## Background sending
+
+Sending runs through WP-Cron: each run sends batches at the chosen rate for up to 20 seconds, writes every result to the CSV's `email_status` column, then queues the next run and requests `wp-cron.php` so it continues straight away. A scheduled send starts at the first WP-Cron run after its time. WP-Cron runs on site visits; for reliable timing, request `wp-cron.php` from a server cron job or an uptime monitor ([Hooking WP-Cron Into the System Task Scheduler](https://developer.wordpress.org/plugins/cron/hooking-wp-cron-into-the-system-task-scheduler/)).
+
 ## Changelog
+
+### 1.3.0
+
+- Background sending with WP-Cron; the page no longer has to stay open.
+- Schedule a send for a date and time.
+- Queue table with Pause, Resume and Cancel.
 
 ### 1.2.0
 - First public release as **Simple CSV Mailer**.

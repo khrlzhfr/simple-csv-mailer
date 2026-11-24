@@ -130,6 +130,12 @@
 	renderTags();
 	eta();
 
+	// Picking a date and time selects "At".
+	const sendAt = document.getElementById( 'scm-send-at' );
+	if ( sendAt ) {
+		sendAt.addEventListener( 'input', () => ( document.getElementById( 'scm-later' ).checked = true ) );
+	}
+
 	form.querySelectorAll( 'button[data-action]' ).forEach( ( b ) =>
 		b.addEventListener( 'click', ( ev ) => {
 			const action = b.dataset.action;
@@ -138,10 +144,17 @@
 				window.tinymce.triggerSave();
 			}
 			form.querySelector( '[name=test_to]' ).required = action === 'test';
-			if ( action === 'send' ) {
+			const later = document.getElementById( 'scm-later' );
+			const at = document.getElementById( 'scm-send-at' );
+			at.required = action === 'send' && later.checked;
+			if ( action === 'send' && form.checkValidity() ) {
 				const l = current();
 				const addr = ( form.querySelector( '[name=alias]' ).value || '?' ) + data.from;
-				if ( ! l || ! window.confirm( t.confirm.replace( '%1$s', Math.max( 0, l.count - l.done ) ).replace( '%2$s', addr ) ) ) {
+				const left = l ? Math.max( 0, l.count - l.done ) : 0;
+				const msg = later.checked && at.value
+					? t.confirmAt.replace( '%1$s', left ).replace( '%2$s', addr ).replace( '%3$s', at.value.replace( 'T', ' ' ) )
+					: t.confirm.replace( '%1$s', left ).replace( '%2$s', addr );
+				if ( ! l || ! window.confirm( msg ) ) {
 					ev.preventDefault();
 				}
 			}
