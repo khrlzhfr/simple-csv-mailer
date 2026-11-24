@@ -13,6 +13,6 @@ require_once dirname( __DIR__ ) . '/lib/plugin-update-checker/plugin-update-chec
 $simple_csv_mailer_updates = YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
 	'https://github.com/khrlzhfr/simple-csv-mailer/',
 	SCM_FILE,
-	'simple-csv-mailer'
+	dirname( plugin_basename( SCM_FILE ) ) // Keep updates in whichever folder this copy was installed in.
 );
 $simple_csv_mailer_updates->getVcsApi()->enableReleaseAssets( '/simple-csv-mailer\.zip$/' );

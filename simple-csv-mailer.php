@@ -1,22 +1,47 @@
 <?php
 /**
- * Plugin Name:       Simple CSV Mailer
+ * Plugin Name:       khrlzhfr Simple CSV Mailer
  * Plugin URI:        https://github.com/khrlzhfr/simple-csv-mailer
  * Description:       Send personalised emails to a CSV list using wp_mail(), with merge tags, attachments and a sending rate, from Tools → Mailer.
- * Version:           1.3.0
+ * Version:           1.4.0
  * Requires at least: 6.4
  * Requires PHP:      7.4
  * Author:            Khairil Zhafri
  * Author URI:        https://khrlzh.fr
  * License:           GPL-2.0-or-later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
- * Text Domain:       simple-csv-mailer
+ * Text Domain:       khrlzhfr-simple-csv-mailer
  */
 
 defined( 'ABSPATH' ) || exit;
 
+// Another copy of this plugin is already running (for example one installed under its earlier folder name): stay inactive and say so on the Plugins screen.
+if ( defined( 'SCM_FILE' ) ) {
+	add_action(
+		'admin_notices',
+		static function () {
+			global $pagenow;
+			if ( 'plugins.php' !== $pagenow || ! current_user_can( 'activate_plugins' ) ) {
+				return;
+			}
+			printf(
+				'<div class="notice notice-warning"><p>%s</p></div>',
+				esc_html(
+					sprintf(
+						/* translators: 1: plugin name, 2: folder of the copy that is running */
+						__( '%1$s is installed twice. The copy in the %2$s folder is running. Deactivate and delete the other copy; its settings and data are kept.', 'khrlzhfr-simple-csv-mailer' ),
+						'khrlzhfr Simple CSV Mailer',
+						dirname( plugin_basename( SCM_FILE ) )
+					)
+				)
+			);
+		}
+	);
+	return;
+}
+
 define( 'SCM_FILE', __FILE__ );
-define( 'SCM_VERSION', '1.3.0' );
+define( 'SCM_VERSION', '1.4.0' );
 
 require_once __DIR__ . '/includes/class-scm-mailer.php';
 

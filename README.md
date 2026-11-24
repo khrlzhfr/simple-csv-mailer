@@ -1,6 +1,6 @@
-# Simple CSV Mailer
+# khrlzhfr Simple CSV Mailer
 
-By [Khairil Zhafri](https://khrlzh.fr). Version 1.3.0. Requires WordPress 6.4+ and PHP 7.4+. Folder, main file and text domain: `simple-csv-mailer`.
+By [Khairil Zhafri](https://khrlzh.fr). Version 1.4.0. Requires WordPress 6.4+ and PHP 7.4+. Folder and text domain: `khrlzhfr-simple-csv-mailer`; main file `simple-csv-mailer.php`.
 
 Send personalised emails to a CSV list using `wp_mail()`, from **Tools → Mailer**. Editors and administrators can use it.
 
@@ -12,7 +12,7 @@ Send personalised emails to a CSV list using `wp_mail()`, from **Tools → Maile
 
 ## Installing
 
-**From GitHub (gets updates straight away):** download `simple-csv-mailer.zip` from the [latest release](https://github.com/khrlzhfr/simple-csv-mailer/releases/latest), then upload it under Plugins → Add New → Upload Plugin. New versions appear under Dashboard → Updates as soon as they are released on GitHub; select **Enable auto-updates** next to the plugin to install them automatically.
+**From GitHub (gets updates straight away):** download `khrlzhfr-simple-csv-mailer.zip` from the [latest release](https://github.com/khrlzhfr/simple-csv-mailer/releases/latest), then upload it under Plugins → Add New → Upload Plugin. New versions appear under Dashboard → Updates as soon as they are released on GitHub; select **Enable auto-updates** next to the plugin to install them automatically.
 
 **From WordPress.org:** once approved in the Plugin Directory, install **Simple CSV Mailer** from Plugins → Add New. Updates arrive through WordPress.org.
 
@@ -22,7 +22,7 @@ Both are the same plugin. The GitHub copy also contains an updater (`includes/gi
 
 1. Bump `Version:` and `SCM_VERSION` in `simple-csv-mailer.php`, `Stable tag:` in `readme.txt`, and add a changelog entry to both readmes.
 2. Commit, then publish a release with a matching tag (for example `v1.2.1`) on GitHub's Releases page, or push the tag.
-3. The Release workflow checks the version and attaches `simple-csv-mailer.zip`. Sites installed from GitHub see the update straight away.
+3. The Release workflow checks the version and attaches `khrlzhfr-simple-csv-mailer.zip`. Sites installed from GitHub see the update straight away.
 4. Once the plugin is approved on WordPress.org, copy the same version to its SVN repository, leaving out the files in `.distignore`.
 
 ## Files
@@ -42,6 +42,11 @@ Deleting the plugin removes its jobs, drafts and the `uploads/mailer` folder fro
 Sending runs through WP-Cron: each run sends batches at the chosen rate for up to 20 seconds, writes every result to the CSV's `email_status` column, then queues the next run and requests `wp-cron.php` so it continues straight away. A scheduled send starts at the first WP-Cron run after its time. WP-Cron runs on site visits; for reliable timing, request `wp-cron.php` from a server cron job or an uptime monitor ([Hooking WP-Cron Into the System Task Scheduler](https://developer.wordpress.org/plugins/cron/hooking-wp-cron-into-the-system-task-scheduler/)).
 
 ## Changelog
+
+### 1.4.0
+- Renamed to khrlzhfr Simple CSV Mailer. The folder and text domain are now `khrlzhfr-simple-csv-mailer`. To switch a site, install this version, then delete the old copy: settings and data are kept.
+- If two copies are installed, only one runs and the Plugins screen says which. Deleting a copy no longer removes data another installed copy still uses.
+- Downloaded CSVs are safe to open in a spreadsheet: values that would run as a formula get a leading apostrophe in the download. The stored list and the emails are unchanged.
 
 ### 1.3.0
 

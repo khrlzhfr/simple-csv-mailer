@@ -6,6 +6,24 @@
 
 defined( 'WP_UNINSTALL_PLUGIN' ) || exit;
 
+/** Whether another copy of this plugin (same main file, other folder) is still installed. */
+function simple_csv_mailer_other_copy_installed() {
+	if ( ! function_exists( 'get_plugins' ) ) {
+		require_once ABSPATH . 'wp-admin/includes/plugin.php';
+	}
+	foreach ( array_keys( get_plugins() ) as $file ) {
+		if ( basename( $file ) === basename( WP_UNINSTALL_PLUGIN ) && $file !== WP_UNINSTALL_PLUGIN ) {
+			return true;
+		}
+	}
+	return false;
+}
+
+// Deleting one copy while another stays installed must not remove the data they share.
+if ( simple_csv_mailer_other_copy_installed() ) {
+	return;
+}
+
 /** Deletes a folder and everything in it. */
 function simple_csv_mailer_uninstall_remove_dir( $dir ) {
 	if ( ! is_dir( $dir ) ) {

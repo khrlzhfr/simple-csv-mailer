@@ -3,7 +3,7 @@ name: Release
 # Publish a release in either of two ways:
 # - push a tag like v1.0.1 (matching the Version in the plugin header), or
 # - create a release with that tag on GitHub's website.
-# Either way this builds simple-csv-mailer.zip and attaches it.
+# Either way this builds khrlzhfr-simple-csv-mailer.zip and attaches it.
 on:
   push:
     tags: ['v*']
@@ -33,14 +33,14 @@ jobs:
       - name: Build the zip
         run: |
           mkdir -p dist
-          git archive --format=zip --prefix=simple-csv-mailer/ -o dist/simple-csv-mailer.zip HEAD
+          git archive --format=zip --prefix=khrlzhfr-simple-csv-mailer/ -o dist/khrlzhfr-simple-csv-mailer.zip HEAD
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" dist/simple-csv-mailer.zip --clobber
+            gh release upload "${GITHUB_REF_NAME}" dist/khrlzhfr-simple-csv-mailer.zip --clobber
           else
-            gh release create "${GITHUB_REF_NAME}" dist/simple-csv-mailer.zip --title "${GITHUB_REF_NAME}" --generate-notes
+            gh release create "${GITHUB_REF_NAME}" dist/khrlzhfr-simple-csv-mailer.zip --title "${GITHUB_REF_NAME}" --generate-notes
           fi

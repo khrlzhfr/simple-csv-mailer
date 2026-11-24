@@ -1,10 +1,10 @@
-=== Simple CSV Mailer ===
+=== khrlzhfr Simple CSV Mailer ===
 Contributors: khrlzhfr
 Tags: email, bulk email, csv, mail merge, wp_mail
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.3.0
+Stable tag: 1.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -12,7 +12,7 @@ Send personalised emails to a CSV list using wp_mail(), with merge tags, attachm
 
 == Description ==
 
-Simple CSV Mailer sends one email per row of a CSV file through WordPress's own `wp_mail()`, so it uses whatever mail service your site already has (for example an SMTP or Amazon SES plugin).
+khrlzhfr Simple CSV Mailer sends one email per row of a CSV file through WordPress's own `wp_mail()`, so it uses whatever mail service your site already has (for example an SMTP or Amazon SES plugin).
 
 * **Merge tags** – every CSV column becomes a tag such as `%first_name%` that you can use in the subject, body and attachment URLs.
 * **Attachments** – one URL per line. Files on your site are read from disk; others are downloaded once and cached. A column can hold a different file for each person.
@@ -70,6 +70,11 @@ Versions before 1.2.0 kept files in `wp-content/mailer/`. They are moved to `wp-
 
 == Changelog ==
 
+= 1.4.0 =
+* Renamed to khrlzhfr Simple CSV Mailer. The folder and text domain are now `khrlzhfr-simple-csv-mailer`. To switch a site, install this version, then delete the old copy: settings and data are kept.
+* If two copies are installed, only one runs and the Plugins screen says which. Deleting a copy no longer removes data another installed copy still uses.
+* Downloaded CSVs are safe to open in a spreadsheet: values that would run as a formula get a leading apostrophe in the download. The stored list and the emails are unchanged.
+
 = 1.3.0 =
 * Sending runs in the background with WP-Cron, so the page no longer has to stay open.
 * Schedule a send for a date and time.
@@ -82,6 +87,9 @@ Versions before 1.2.0 kept files in `wp-content/mailer/`. They are moved to `wp-
 * All text can be translated.
 
 == Upgrade Notice ==
+
+= 1.4.0 =
+New name and folder. Install this version first, then delete the old copy; your settings and data are kept.
 
 = 1.3.0 =
 Background and scheduled sending. Lists paused in 1.2.0 appear under Queue; select Resume to finish them.
