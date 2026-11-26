@@ -58,6 +58,10 @@ Nothing else is sent anywhere by the plugin itself. Google's [Terms of Service](
 
 A header row and a column called `email` (or a column with "email" in its name). Every other column becomes a merge tag.
 
+= Can one row go to several people? =
+
+Yes. Put several addresses in the email cell, separated by commas, semicolons, spaces or line breaks. They all receive the same email together, as for Cc. `Jane Doe <jane@example.com>` also works. If any address in a cell is invalid, that row is marked Invalid and isn't sent, so nobody is left out by mistake. Reply-To, Cc and Bcc accept the same separators.
+
 = Can I use a Google Sheet as the list? =
 
 Yes. Share the sheet so anyone with the link can view it, open **Upload CSV**, paste the link under "Or import it from a web address" and select Import. The tab in the link is used. Each import adds a new list, so a list already being sent is never changed underneath you.
@@ -82,6 +86,7 @@ Versions before 1.2.0 kept files in `wp-content/mailer/`. They are moved to `wp-
 
 = 1.5.0 =
 * Import a list from a URL, including Google Sheets, Google Drive and Dropbox sharing links. The address is remembered for the next import.
+* An email cell can hold several addresses, separated by commas, semicolons, spaces or line breaks. Reply-To, Cc and Bcc accept the same separators.
 
 = 1.4.0 =
 * Renamed to khrlzhfr Simple CSV Mailer. The folder and text domain are now `khrlzhfr-simple-csv-mailer`. To switch a site, install this version, then delete the old copy: settings and data are kept.
@@ -102,7 +107,7 @@ Versions before 1.2.0 kept files in `wp-content/mailer/`. They are moved to `wp-
 == Upgrade Notice ==
 
 = 1.5.0 =
-Lists can be imported from a URL, such as a Google Sheet.
+Lists can be imported from a URL, such as a Google Sheet, and a row can go to several addresses.
 
 = 1.4.0 =
 New name and folder. Install this version first, then delete the old copy; your settings and data are kept.

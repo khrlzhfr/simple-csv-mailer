@@ -4,6 +4,7 @@ By [Khairil Zhafri](https://khrlzh.fr). Version 1.5.0. Requires WordPress 6.4+ a
 
 Send personalised emails to a CSV list using `wp_mail()`, from **Tools → Mailer**. Editors and administrators can use it.
 
+- **Several recipients per row:** separate addresses in the email cell with commas, semicolons, spaces or line breaks.
 - **Merge tags:** every CSV column becomes a tag such as `%first_name%` for the subject, body and attachment URLs.
 - **Attachments:** one URL per line; site files are read from disk, others downloaded once and cached. Up to 10 MB per email.
 - **Background and scheduled sending:** how many emails every so many seconds, now or at a date and time. Runs in the background with WP-Cron, so the page can be closed.
@@ -45,6 +46,7 @@ Sending runs through WP-Cron: each run sends batches at the chosen rate for up t
 
 ### 1.5.0
 - Import a list from a URL, including Google Sheets, Google Drive and Dropbox sharing links.
+- An email cell can hold several addresses, separated by commas, semicolons, spaces or line breaks; the row goes to all of them in one email. A row with any invalid address is marked Invalid and not sent. Reply-To, Cc and Bcc accept the same separators.
 
 ### 1.4.0
 - Renamed to khrlzhfr Simple CSV Mailer. The folder and text domain are now `khrlzhfr-simple-csv-mailer`. To switch a site, install this version, then delete the old copy: settings and data are kept.

@@ -236,16 +236,45 @@ final class SCM_Mailer {
 
 	/* ---------- Mail ---------- */
 
+	/**
+	 * Addresses in a field or CSV cell. Spaces, commas and semicolons separate them,
+	 * since none can appear in an address. When addresses are written as
+	 * "Jane Doe <jane@example.com>", words without an @ are names and are ignored.
+	 * Anything else that isn't a valid address goes into $bad. Repeats are dropped.
+	 */
 	public static function parse_list( $s, &$bad ) {
-		$ok = [];
-		foreach ( array_filter( array_map( 'trim', explode( ',', (string) $s ) ) ) as $e ) {
-			if ( is_email( $e ) ) {
-				$ok[] = $e;
-			} else {
+		$ok    = [];
+		$seen  = [];
+		$named = false !== strpos( (string) $s, '<' );
+		foreach ( preg_split( '/[\s,;]+/u', (string) $s, -1, PREG_SPLIT_NO_EMPTY ) as $e ) {
+			$e = trim( preg_replace( '/^mailto:/i', '', trim( $e, "<>\"'()[]" ) ), "<>\"'()[]" );
+			if ( '' === $e || ( $named && false === strpos( $e, '@' ) ) ) {
+				continue;
+			}
+			if ( ! is_email( $e ) ) {
 				$bad[] = $e;
+				continue;
+			}
+			if ( ! isset( $seen[ strtolower( $e ) ] ) ) {
+				$seen[ strtolower( $e ) ] = true;
+				$ok[]                     = $e;
 			}
 		}
 		return $ok;
+	}
+
+	/** The addresses in a row's email cell, or an empty array if the cell is empty or any address in it is invalid. */
+	public static function row_to( $cell ) {
+		$bad = [];
+		$ok  = self::parse_list( $cell, $bad );
+		return $bad ? [] : $ok;
+	}
+
+	/** Key for spotting a row that would go to the same people as an earlier one. */
+	private static function to_key( $to ) {
+		$to = array_map( 'strtolower', $to );
+		sort( $to );
+		return implode( ',', $to );
 	}
 
 	public static function job_from_post() {
@@ -452,7 +481,10 @@ final class SCM_Mailer {
 		$done_emails = [];
 		foreach ( $csv['rows'] as $r ) {
 			if ( 0 === strpos( (string) $r[ $s ], 'Sent' ) ) {
-				$done_emails[ strtolower( trim( $r[ $e ] ) ) ] = true;
+				$to = self::row_to( $r[ $e ] );
+				if ( $to ) {
+					$done_emails[ self::to_key( $to ) ] = true;
+				}
 			}
 		}
 
@@ -464,17 +496,17 @@ final class SCM_Mailer {
 			if ( $attempts >= $job['count'] ) {
 				break;
 			}
-			$email = trim( (string) $r[ $e ] );
-			$lc    = strtolower( $email );
-			if ( '' === $email || ! is_email( $email ) ) {
+			$to = self::row_to( $r[ $e ] );
+			if ( ! $to ) {
 				$r[ $s ] = 'Invalid ' . self::now();
 				continue;
 			}
+			$lc = self::to_key( $to );
 			if ( isset( $done_emails[ $lc ] ) ) {
 				$r[ $s ] = 'Skipped ' . self::now();
 				continue;
 			}
-			$ok      = self::send_one( $job, $csv, $r, $email );
+			$ok      = self::send_one( $job, $csv, $r, implode( ', ', $to ) );
 			$r[ $s ] = ( $ok ? 'Sent ' : 'Failed ' ) . self::now();
 			if ( $ok ) {
 				$done_emails[ $lc ] = true;
@@ -489,12 +521,12 @@ final class SCM_Mailer {
 		foreach ( $csv['rows'] as &$r ) {
 			$st = trim( (string) $r[ $s ] );
 			if ( '' === $st ) {
-				$email = trim( (string) $r[ $e ] );
-				if ( '' === $email || ! is_email( $email ) ) {
+				$to = self::row_to( $r[ $e ] );
+				if ( ! $to ) {
 					$r[ $s ] = 'Invalid ' . self::now();
 					continue;
 				}
-				if ( isset( $done_emails[ strtolower( $email ) ] ) ) {
+				if ( isset( $done_emails[ self::to_key( $to ) ] ) ) {
 					$r[ $s ] = 'Skipped ' . self::now();
 					continue;
 				}
@@ -902,7 +934,7 @@ final class SCM_Mailer {
 			}
 			$first = null;
 			foreach ( $csv['rows'] as $r ) {
-				if ( is_email( trim( $r[ $csv['email'] ] ) ) ) {
+				if ( self::row_to( $r[ $csv['email'] ] ) ) {
 					$first = $r;
 					break;
 				}
