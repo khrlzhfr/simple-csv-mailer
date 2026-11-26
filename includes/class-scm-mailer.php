@@ -675,6 +675,88 @@ final class SCM_Mailer {
 		return self::$pending;
 	}
 
+	/**
+	 * Where to download a CSV from. Google Sheets and Google Drive sharing links
+	 * become their CSV download links (keeping the sheet tab), Dropbox links
+	 * their direct download. Anything else is used as it is.
+	 */
+	public static function download_url( $url ) {
+		$url = trim( (string) $url );
+		if ( preg_match( '~^https://docs\.google\.com/spreadsheets/d/(e/)?([A-Za-z0-9_-]+)~', $url, $m ) ) {
+			$gid = preg_match( '/[#&?]gid=([0-9]+)/', $url, $g ) ? $g[1] : '';
+			if ( $m[1] ) { // "Publish to the web" link.
+				return 'https://docs.google.com/spreadsheets/d/e/' . $m[2] . '/pub?output=csv' . ( '' !== $gid ? '&single=true&gid=' . $gid : '' );
+			}
+			return 'https://docs.google.com/spreadsheets/d/' . $m[2] . '/export?format=csv' . ( '' !== $gid ? '&gid=' . $gid : '' );
+		}
+		if ( preg_match( '~^https://drive\.google\.com/(?:file/d/|open\?id=|uc\?(?:[^#]*&)?id=)([A-Za-z0-9_-]+)~', $url, $m ) ) {
+			return 'https://drive.google.com/uc?export=download&id=' . $m[1];
+		}
+		if ( preg_match( '~^https://(?:www\.)?dropbox\.com/~', $url ) ) {
+			return add_query_arg( 'dl', '1', $url );
+		}
+		return $url;
+	}
+
+	/**
+	 * Downloads a CSV from a public web address (never the server's own network) into a temporary file.
+	 *
+	 * @return string|WP_Error Path of the temporary file; the caller deletes it.
+	 */
+	private static function fetch_csv( $url ) {
+		if ( ! preg_match( '~^https?://~i', (string) $url ) || ! wp_http_validate_url( $url ) ) {
+			return new WP_Error( 'scm_url', __( 'Enter a full web address, starting with https://', 'khrlzhfr-simple-csv-mailer' ) );
+		}
+		$tmp = wp_tempnam( 'scm-import.csv' );
+		$res = wp_safe_remote_get(
+			self::download_url( $url ),
+			[
+				'timeout'             => 30,
+				'redirection'         => 5,
+				'stream'              => true,
+				'filename'            => $tmp,
+				'limit_response_size' => self::MAX_UPLOAD + 1,
+			]
+		);
+		$error = null;
+		if ( is_wp_error( $res ) ) {
+			$error = __( 'The CSV could not be fetched:', 'khrlzhfr-simple-csv-mailer' ) . ' ' . $res->get_error_message();
+		} elseif ( 200 !== (int) wp_remote_retrieve_response_code( $res ) ) {
+			/* translators: %d: HTTP status code */
+			$error = sprintf( __( 'The address answered with HTTP %d. Check the address, and that the file is shared so anyone with the link can view it.', 'khrlzhfr-simple-csv-mailer' ), (int) wp_remote_retrieve_response_code( $res ) );
+		} elseif ( filesize( $tmp ) > self::MAX_UPLOAD ) {
+			$error = __( 'The file is larger than 5 MB.', 'khrlzhfr-simple-csv-mailer' );
+		} else {
+			$type = strtolower( (string) wp_remote_retrieve_header( $res, 'content-type' ) );
+			$head = (string) file_get_contents( $tmp, false, null, 0, 512 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- reads the start of the downloaded file to check it isn't a web page.
+			if ( false !== strpos( $type, 'text/html' ) || preg_match( '/^\s*<(?:!doctype|html)/i', $head ) ) {
+				$error = __( 'The address returned a web page, not a CSV. For Google Sheets or Google Drive, share the file so anyone with the link can view it.', 'khrlzhfr-simple-csv-mailer' );
+			}
+		}
+		if ( null !== $error ) {
+			wp_delete_file( $tmp );
+			return new WP_Error( 'scm_url', $error );
+		}
+		return $tmp;
+	}
+
+	/** Saves a checked list under a new name and makes it the selected list. Ends the request. */
+	private static function save_list( $csv, $base ) {
+		$base = preg_replace( '/[^A-Za-z0-9_-]+/', '_', (string) $base );
+		$base = preg_replace( '/^completed_/', '', trim( (string) $base, '_' ) );
+		$base = '' !== $base ? $base : 'list';
+		$name = sprintf( '%s_%s_%s.csv', $base, self::stamp(), strtolower( wp_generate_password( 6, false ) ) );
+		// Save the parsed rows rather than the raw file, so the stored list is a clean CSV.
+		if ( ! self::write( self::dir() . "/$name", $csv['headers'], $csv['rows'] ) ) {
+			self::notice( esc_html__( 'Could not save the file.', 'khrlzhfr-simple-csv-mailer' ), 'error' );
+			self::redirect( self::url() );
+		}
+		update_user_meta( get_current_user_id(), 'scm_last_file', $name );
+		/* translators: 1: file name, 2: number of recipients */
+		self::notice( esc_html( sprintf( __( 'Added %1$s (%2$d recipients).', 'khrlzhfr-simple-csv-mailer' ), $name, self::recipients( $csv ) ) ) );
+		self::redirect( self::url() );
+	}
+
 	public static function handle_post( $action ) {
 		$uid = get_current_user_id();
 
@@ -699,19 +781,31 @@ final class SCM_Mailer {
 				self::redirect( self::url() );
 			}
 
-			$base = preg_replace( '/[^A-Za-z0-9_-]+/', '_', pathinfo( $orig, PATHINFO_FILENAME ) );
-			$base = $base ? $base : 'list';
-			$base = preg_replace( '/^completed_/', '', $base );
-			$name = sprintf( '%s_%s_%s.csv', $base, self::stamp(), strtolower( wp_generate_password( 6, false ) ) );
-			// Save the rows already parsed above rather than moving the raw upload, so the stored list is a clean CSV.
-			if ( ! self::write( self::dir() . "/$name", $csv['headers'], $csv['rows'] ) ) {
-				self::notice( esc_html__( 'Could not save the file.', 'khrlzhfr-simple-csv-mailer' ), 'error' );
+			self::save_list( $csv, pathinfo( $orig, PATHINFO_FILENAME ) );
+		}
+
+		if ( 'import_url' === $action ) {
+			$url = esc_url_raw( self::post( 'csv_url' ) );
+			update_user_meta( $uid, 'scm_csv_url', $url );
+			$tmp = self::fetch_csv( $url );
+			if ( is_wp_error( $tmp ) ) {
+				self::notice( esc_html( $tmp->get_error_message() ), 'error' );
 				self::redirect( self::url() );
 			}
-			update_user_meta( $uid, 'scm_last_file', $name );
-			/* translators: 1: file name, 2: number of recipients */
-			self::notice( esc_html( sprintf( __( 'Uploaded %1$s (%2$d recipients).', 'khrlzhfr-simple-csv-mailer' ), $name, self::recipients( $csv ) ) ) );
-			self::redirect( self::url() );
+			$csv = self::read( $tmp );
+			wp_delete_file( $tmp );
+			if ( ! $csv || false === $csv['email'] ) {
+				self::notice( esc_html__( 'The CSV needs a header row with an "email" column.', 'khrlzhfr-simple-csv-mailer' ), 'error' );
+				self::redirect( self::url() );
+			}
+			if ( false !== strpos( $url, 'docs.google.com/spreadsheets' ) ) {
+				$base = 'google_sheet';
+			} elseif ( false !== strpos( $url, 'drive.google.com' ) ) {
+				$base = 'google_drive';
+			} else {
+				$base = pathinfo( (string) wp_parse_url( $url, PHP_URL_PATH ), PATHINFO_FILENAME );
+			}
+			self::save_list( $csv, $base );
 		}
 
 		if ( 'delete' === $action ) {
@@ -1081,6 +1175,15 @@ final class SCM_Mailer {
 					<input type="file" name="csv" id="scm-csv" accept=".csv,text/csv" required>
 					<input type="submit" class="button" value="<?php esc_attr_e( 'Upload', 'khrlzhfr-simple-csv-mailer' ); ?>" disabled>
 				</form>
+				<p class="install-help"><?php esc_html_e( 'Or import it from a web address, such as a Google Sheet:', 'khrlzhfr-simple-csv-mailer' ); ?></p>
+				<form method="post" class="wp-upload-form">
+					<?php wp_nonce_field( 'scm_form' ); ?>
+					<input type="hidden" name="scm_action" value="import_url">
+					<label class="screen-reader-text" for="scm-csv-url"><?php esc_html_e( 'CSV address', 'khrlzhfr-simple-csv-mailer' ); ?></label>
+					<input type="url" name="csv_url" id="scm-csv-url" class="code" value="<?php echo esc_attr( (string) get_user_meta( get_current_user_id(), 'scm_csv_url', true ) ); ?>" placeholder="https://docs.google.com/spreadsheets/d/…" required>
+					<input type="submit" class="button" value="<?php esc_attr_e( 'Import', 'khrlzhfr-simple-csv-mailer' ); ?>">
+				</form>
+				<p class="description"><?php esc_html_e( 'Paste the sharing link of a Google Sheet (the tab in the link is used) or of a CSV file in Google Drive or Dropbox, or any public CSV address. Share it so anyone with the link can view it. Each import adds a new list, like an upload.', 'khrlzhfr-simple-csv-mailer' ); ?></p>
 			</div>
 
 			<div class="notice notice-warning inline">

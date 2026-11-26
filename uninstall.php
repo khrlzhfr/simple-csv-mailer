@@ -60,6 +60,7 @@ function simple_csv_mailer_uninstall_site() {
 function simple_csv_mailer_uninstall() {
 	delete_metadata( 'user', 0, 'scm_draft', '', true );
 	delete_metadata( 'user', 0, 'scm_last_file', '', true );
+	delete_metadata( 'user', 0, 'scm_csv_url', '', true );
 
 	if ( is_multisite() ) {
 		foreach ( get_sites( [ 'fields' => 'ids', 'number' => 0 ] ) as $site_id ) {

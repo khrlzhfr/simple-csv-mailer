@@ -4,7 +4,7 @@ Tags: email, bulk email, csv, mail merge, wp_mail
 Requires at least: 6.4
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 1.4.0
+Stable tag: 1.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -14,6 +14,7 @@ Send personalised emails to a CSV list using wp_mail(), with merge tags, attachm
 
 khrlzhfr Simple CSV Mailer sends one email per row of a CSV file through WordPress's own `wp_mail()`, so it uses whatever mail service your site already has (for example an SMTP or Amazon SES plugin).
 
+* **CSV from a file or a URL** – upload a CSV, or import it from a web address such as a Google Sheet or a file in Google Drive or Dropbox.
 * **Merge tags** – every CSV column becomes a tag such as `%first_name%` that you can use in the subject, body and attachment URLs.
 * **Attachments** – one URL per line. Files on your site are read from disk; others are downloaded once and cached. A column can hold a different file for each person.
 * **Background and scheduled sending** – choose how many emails to send every so many seconds, now or at a date and time. Sending runs in the background, so you can close the page.
@@ -38,7 +39,12 @@ File names also include a random string. Delete lists when you no longer need th
 
 == External services ==
 
-This plugin only connects to other sites when you list an attachment URL that is not on your own site. It then downloads that file once (cached for a day) to attach it to the emails. Nothing else is sent anywhere by the plugin itself. Emails are sent with `wp_mail()` through whatever mail service your site uses.
+This plugin only connects to other sites in two cases, and only when you ask it to:
+
+* **Import from URL:** it downloads the CSV from the address you enter, for example a Google Sheet (`docs.google.com`), a file in Google Drive (`drive.google.com`) or Dropbox (`dropbox.com`). Only the request for that file is sent.
+* **Attachments:** when you list an attachment URL that is not on your own site, it downloads that file once (cached for a day) to attach it to the emails.
+
+Nothing else is sent anywhere by the plugin itself. Google's [Terms of Service](https://policies.google.com/terms) and [Privacy Policy](https://policies.google.com/privacy), or Dropbox's [Terms](https://www.dropbox.com/terms) and [Privacy Policy](https://www.dropbox.com/privacy), apply to files fetched from them. Emails are sent with `wp_mail()` through whatever mail service your site uses.
 
 == Installation ==
 
@@ -51,6 +57,10 @@ This plugin only connects to other sites when you list an attachment URL that is
 = What does the CSV need? =
 
 A header row and a column called `email` (or a column with "email" in its name). Every other column becomes a merge tag.
+
+= Can I use a Google Sheet as the list? =
+
+Yes. Share the sheet so anyone with the link can view it, open **Upload CSV**, paste the link under "Or import it from a web address" and select Import. The tab in the link is used. Each import adds a new list, so a list already being sent is never changed underneath you.
 
 = Why are some emails not delivered? =
 
@@ -70,6 +80,9 @@ Versions before 1.2.0 kept files in `wp-content/mailer/`. They are moved to `wp-
 
 == Changelog ==
 
+= 1.5.0 =
+* Import a list from a URL, including Google Sheets, Google Drive and Dropbox sharing links. The address is remembered for the next import.
+
 = 1.4.0 =
 * Renamed to khrlzhfr Simple CSV Mailer. The folder and text domain are now `khrlzhfr-simple-csv-mailer`. To switch a site, install this version, then delete the old copy: settings and data are kept.
 * If two copies are installed, only one runs and the Plugins screen says which. Deleting a copy no longer removes data another installed copy still uses.
@@ -87,6 +100,9 @@ Versions before 1.2.0 kept files in `wp-content/mailer/`. They are moved to `wp-
 * All text can be translated.
 
 == Upgrade Notice ==
+
+= 1.5.0 =
+Lists can be imported from a URL, such as a Google Sheet.
 
 = 1.4.0 =
 New name and folder. Install this version first, then delete the old copy; your settings and data are kept.

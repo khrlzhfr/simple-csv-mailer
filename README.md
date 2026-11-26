@@ -1,6 +1,6 @@
 # khrlzhfr Simple CSV Mailer
 
-By [Khairil Zhafri](https://khrlzh.fr). Version 1.4.0. Requires WordPress 6.4+ and PHP 7.4+. Folder and text domain: `khrlzhfr-simple-csv-mailer`; main file `simple-csv-mailer.php`.
+By [Khairil Zhafri](https://khrlzh.fr). Version 1.5.0. Requires WordPress 6.4+ and PHP 7.4+. Folder and text domain: `khrlzhfr-simple-csv-mailer`; main file `simple-csv-mailer.php`.
 
 Send personalised emails to a CSV list using `wp_mail()`, from **Tools → Mailer**. Editors and administrators can use it.
 
@@ -42,6 +42,9 @@ Deleting the plugin removes its jobs, drafts and the `uploads/mailer` folder fro
 Sending runs through WP-Cron: each run sends batches at the chosen rate for up to 20 seconds, writes every result to the CSV's `email_status` column, then queues the next run and requests `wp-cron.php` so it continues straight away. A scheduled send starts at the first WP-Cron run after its time. WP-Cron runs on site visits; for reliable timing, request `wp-cron.php` from a server cron job or an uptime monitor ([Hooking WP-Cron Into the System Task Scheduler](https://developer.wordpress.org/plugins/cron/hooking-wp-cron-into-the-system-task-scheduler/)).
 
 ## Changelog
+
+### 1.5.0
+- Import a list from a URL, including Google Sheets, Google Drive and Dropbox sharing links.
 
 ### 1.4.0
 - Renamed to khrlzhfr Simple CSV Mailer. The folder and text domain are now `khrlzhfr-simple-csv-mailer`. To switch a site, install this version, then delete the old copy: settings and data are kept.

@@ -3,7 +3,7 @@
  * Plugin Name:       khrlzhfr Simple CSV Mailer
  * Plugin URI:        https://github.com/khrlzhfr/simple-csv-mailer
  * Description:       Send personalised emails to a CSV list using wp_mail(), with merge tags, attachments and a sending rate, from Tools → Mailer.
- * Version:           1.4.0
+ * Version:           1.5.0
  * Requires at least: 6.4
  * Requires PHP:      7.4
  * Author:            Khairil Zhafri
@@ -41,7 +41,7 @@ if ( defined( 'SCM_FILE' ) ) {
 }
 
 define( 'SCM_FILE', __FILE__ );
-define( 'SCM_VERSION', '1.4.0' );
+define( 'SCM_VERSION', '1.5.0' );
 
 require_once __DIR__ . '/includes/class-scm-mailer.php';
 
