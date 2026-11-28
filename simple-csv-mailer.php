@@ -16,7 +16,7 @@
 defined( 'ABSPATH' ) || exit;
 
 // Another copy of this plugin is already running (for example one installed under its earlier folder name): stay inactive and say so on the Plugins screen.
-if ( defined( 'SCM_FILE' ) ) {
+if ( defined( 'KHRLSCM_FILE' ) ) {
 	add_action(
 		'admin_notices',
 		static function () {
@@ -31,7 +31,7 @@ if ( defined( 'SCM_FILE' ) ) {
 						/* translators: 1: plugin name, 2: folder of the copy that is running */
 						__( '%1$s is installed twice. The copy in the %2$s folder is running. Deactivate and delete the other copy; its settings and data are kept.', 'khrlzhfr-simple-csv-mailer' ),
 						'khrlzhfr Simple CSV Mailer',
-						dirname( plugin_basename( SCM_FILE ) )
+						dirname( plugin_basename( KHRLSCM_FILE ) )
 					)
 				)
 			);
@@ -40,21 +40,21 @@ if ( defined( 'SCM_FILE' ) ) {
 	return;
 }
 
-define( 'SCM_FILE', __FILE__ );
-define( 'SCM_VERSION', '1.5.0' );
+define( 'KHRLSCM_FILE', __FILE__ );
+define( 'KHRLSCM_VERSION', '1.5.0' );
 
-require_once __DIR__ . '/includes/class-scm-mailer.php';
+require_once __DIR__ . '/includes/class-khrlscm-mailer.php';
 
 // Copies installed from GitHub update from GitHub Releases; the WordPress.org build leaves this file out.
 if ( file_exists( __DIR__ . '/includes/github-updater.php' ) ) {
 	require_once __DIR__ . '/includes/github-updater.php';
 }
 
-register_activation_hook( __FILE__, [ 'SCM_Mailer', 'activate' ] );
+register_activation_hook( __FILE__, [ 'KHRLSCM_Mailer', 'activate' ] );
 
 // Background sending runs from WP-Cron, outside wp-admin.
-add_action( SCM_Mailer::HOOK, [ 'SCM_Mailer', 'background_run' ] );
+add_action( KHRLSCM_Mailer::HOOK, [ 'KHRLSCM_Mailer', 'background_run' ] );
 
 if ( is_admin() ) {
-	SCM_Mailer::init();
+	KHRLSCM_Mailer::init();
 }

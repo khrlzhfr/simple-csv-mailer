@@ -6,7 +6,7 @@ Send personalised emails to a CSV list using `wp_mail()`, from **Tools → Maile
 
 - **Several recipients per row:** separate addresses in the email cell with commas, semicolons, spaces or line breaks.
 - **Merge tags:** every CSV column becomes a tag such as `%first_name%` for the subject, body and attachment URLs.
-- **Attachments:** one URL per line; site files are read from disk, others downloaded once and cached. Up to 10 MB per email.
+- **Attachments:** one URL per line; Media Library files are read from disk, others downloaded once and cached. Up to 10 MB per email.
 - **Background and scheduled sending:** how many emails every so many seconds, now or at a date and time. Runs in the background with WP-Cron, so the page can be closed.
 - **Test, pause, resume, retry:** each row gets an `email_status` with a timestamp, so a paused list continues where it stopped, and failed rows can be sent again.
 - **Records:** finished lists are renamed `completed_…` with a copy of the email saved alongside.
@@ -28,15 +28,15 @@ Both are the same plugin. The GitHub copy also contains an updater (`includes/gi
 
 ## Files
 
-Lists and records live in `wp-content/uploads/mailer/` (`uploads/sites/{ID}/mailer/` on multisite), protected by `.htaccess` on Apache. On Nginx add:
+Lists and records live in `wp-content/uploads/khrlzhfr-simple-csv-mailer/` (each site's own uploads folder on multisite). Every file name has a long random part, so files can't be guessed, and `.htaccess` also blocks them on Apache. On Nginx you can add:
 
 ```
-location ^~ /wp-content/uploads/mailer/ { deny all; }
+location ^~ /wp-content/uploads/khrlzhfr-simple-csv-mailer/ { deny all; }
 ```
 
-Versions before 1.2.0 used `wp-content/mailer/`; it is moved automatically.
+Updating from an earlier version moves the old `uploads/mailer` folder and settings across the first time an administrator screen loads.
 
-Deleting the plugin removes its jobs, drafts and the `uploads/mailer` folder from every site.
+Deleting the plugin removes its jobs, drafts and the `uploads/khrlzhfr-simple-csv-mailer` folder from every site.
 
 ## Background sending
 
@@ -46,6 +46,8 @@ Sending runs through WP-Cron: each run sends batches at the chosen rate for up t
 
 ### 1.5.0
 - Import a list from a URL, including Google Sheets, Google Drive and Dropbox sharing links.
+- Files now live in `uploads/khrlzhfr-simple-csv-mailer/` and every file name has a long random part. Settings use the `khrlscm_` prefix. Existing lists, drafts and queued sends are moved across automatically.
+- Attachments from this site are read from disk only when they are in the Media Library; other site addresses are downloaded like any other URL.
 - An email cell can hold several addresses, separated by commas, semicolons, spaces or line breaks; the row goes to all of them in one email. A row with any invalid address is marked Invalid and not sent. Reply-To, Cc and Bcc accept the same separators.
 
 ### 1.4.0

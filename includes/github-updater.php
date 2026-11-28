@@ -10,9 +10,9 @@ defined( 'ABSPATH' ) || exit;
 
 require_once dirname( __DIR__ ) . '/lib/plugin-update-checker/plugin-update-checker.php';
 
-$simple_csv_mailer_updates = YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
+$khrlscm_updates = YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
 	'https://github.com/khrlzhfr/simple-csv-mailer/',
-	SCM_FILE,
-	dirname( plugin_basename( SCM_FILE ) ) // Keep updates in whichever folder this copy was installed in.
+	KHRLSCM_FILE,
+	dirname( plugin_basename( KHRLSCM_FILE ) ) // Keep updates in whichever folder this copy was installed in.
 );
-$simple_csv_mailer_updates->getVcsApi()->enableReleaseAssets( '/simple-csv-mailer\.zip$/' );
+$khrlscm_updates->getVcsApi()->enableReleaseAssets( '/simple-csv-mailer\.zip$/' );

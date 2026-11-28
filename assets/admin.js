@@ -1,15 +1,15 @@
-/* Simple CSV Mailer: compose screen. Data comes from window.scmData. */
+/* Simple CSV Mailer: compose screen. Data comes from window.khrlscmData. */
 ( function () {
-	const data = window.scmData || { lists: {}, from: '', alert: '', i18n: {} };
+	const data = window.khrlscmData || { lists: {}, from: '', alert: '', i18n: {} };
 	const t = data.i18n;
 
 	if ( data.alert ) {
 		window.alert( data.alert );
 	}
 
-	const wrap = document.querySelector( '.wrap.scm' );
-	const toggle = document.getElementById( 'scm-upload-toggle' );
-	const upload = document.getElementById( 'scm-csv' );
+	const wrap = document.querySelector( '.wrap.khrlscm' );
+	const toggle = document.getElementById( 'khrlscm-upload-toggle' );
+	const upload = document.getElementById( 'khrlscm-csv' );
 	if ( wrap && toggle && upload ) {
 		const submit = upload.form.querySelector( '[type=submit]' );
 		toggle.addEventListener( 'click', ( e ) => {
@@ -23,16 +23,16 @@
 		upload.addEventListener( 'change', () => ( submit.disabled = ! upload.files.length ) );
 	}
 
-	const form = document.getElementById( 'scm-compose' );
+	const form = document.getElementById( 'khrlscm-compose' );
 	if ( ! form ) {
 		return;
 	}
 	const lists = data.lists || {};
-	const file = document.getElementById( 'scm-file' );
-	const subject = document.getElementById( 'scm-subject' );
-	const attachments = document.getElementById( 'scm-attachments' );
-	const tagsBox = document.getElementById( 'scm-tags' );
-	const bodyField = document.getElementById( 'scm_body' );
+	const file = document.getElementById( 'khrlscm-file' );
+	const subject = document.getElementById( 'khrlscm-subject' );
+	const attachments = document.getElementById( 'khrlscm-attachments' );
+	const tagsBox = document.getElementById( 'khrlscm-tags' );
+	const bodyField = document.getElementById( 'khrlscm_body' );
 	let lastFocus = 'body';
 
 	subject.addEventListener( 'focus', () => ( lastFocus = 'subject' ) );
@@ -59,7 +59,7 @@
 		if ( lastFocus === 'attachments' ) {
 			return insertAt( attachments, tag );
 		}
-		const ed = window.tinymce && window.tinymce.get( 'scm_body' );
+		const ed = window.tinymce && window.tinymce.get( 'khrlscm_body' );
 		if ( ed && ! ed.isHidden() ) {
 			ed.focus();
 			ed.execCommand( 'mceInsertContent', false, tag );
@@ -109,14 +109,14 @@
 
 	function eta() {
 		const l = current();
-		const box = document.getElementById( 'scm-eta' );
+		const box = document.getElementById( 'khrlscm-eta' );
 		if ( ! l ) {
 			box.textContent = '';
 			return;
 		}
 		const left = Math.max( 0, l.count - l.done );
-		const n = Math.max( 1, +document.getElementById( 'scm-count' ).value || 1 );
-		const s = Math.max( 1, +document.getElementById( 'scm-seconds' ).value || 1 );
+		const n = Math.max( 1, +document.getElementById( 'khrlscm-count' ).value || 1 );
+		const s = Math.max( 1, +document.getElementById( 'khrlscm-seconds' ).value || 1 );
 		box.textContent = t.eta.replace( '%1$s', left ).replace( '%2$s', fmt( Math.ceil( left / n ) * s ) );
 	}
 
@@ -126,26 +126,26 @@
 			eta();
 		} );
 	}
-	[ 'scm-count', 'scm-seconds' ].forEach( ( id ) => document.getElementById( id ).addEventListener( 'input', eta ) );
+	[ 'khrlscm-count', 'khrlscm-seconds' ].forEach( ( id ) => document.getElementById( id ).addEventListener( 'input', eta ) );
 	renderTags();
 	eta();
 
 	// Picking a date and time selects "At".
-	const sendAt = document.getElementById( 'scm-send-at' );
+	const sendAt = document.getElementById( 'khrlscm-send-at' );
 	if ( sendAt ) {
-		sendAt.addEventListener( 'input', () => ( document.getElementById( 'scm-later' ).checked = true ) );
+		sendAt.addEventListener( 'input', () => ( document.getElementById( 'khrlscm-later' ).checked = true ) );
 	}
 
 	form.querySelectorAll( 'button[data-action]' ).forEach( ( b ) =>
 		b.addEventListener( 'click', ( ev ) => {
 			const action = b.dataset.action;
-			document.getElementById( 'scm-action' ).value = action;
+			document.getElementById( 'khrlscm-action' ).value = action;
 			if ( window.tinymce ) {
 				window.tinymce.triggerSave();
 			}
 			form.querySelector( '[name=test_to]' ).required = action === 'test';
-			const later = document.getElementById( 'scm-later' );
-			const at = document.getElementById( 'scm-send-at' );
+			const later = document.getElementById( 'khrlscm-later' );
+			const at = document.getElementById( 'khrlscm-send-at' );
 			at.required = action === 'send' && later.checked;
 			if ( action === 'send' && form.checkValidity() ) {
 				const l = current();

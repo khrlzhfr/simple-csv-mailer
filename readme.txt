@@ -16,7 +16,7 @@ khrlzhfr Simple CSV Mailer sends one email per row of a CSV file through WordPre
 
 * **CSV from a file or a URL** – upload a CSV, or import it from a web address such as a Google Sheet or a file in Google Drive or Dropbox.
 * **Merge tags** – every CSV column becomes a tag such as `%first_name%` that you can use in the subject, body and attachment URLs.
-* **Attachments** – one URL per line. Files on your site are read from disk; others are downloaded once and cached. A column can hold a different file for each person.
+* **Attachments** – one URL per line. Media Library files are read from disk; others are downloaded once and cached. A column can hold a different file for each person.
 * **Background and scheduled sending** – choose how many emails to send every so many seconds, now or at a date and time. Sending runs in the background, so you can close the page.
 * **Test first** – send a test to yourself using the first recipient's data.
 * **Pause and resume** – each row gets an `email_status` (Sent, Skipped, Invalid or Failed) with a timestamp, so a paused list continues where it stopped.
@@ -31,9 +31,9 @@ Only send to people who have asked to hear from you. Never send to purchased or 
 
 = Where files are kept =
 
-Lists and records are stored in `wp-content/uploads/mailer/` (each site's own uploads folder on multisite), with an `.htaccess` file that blocks direct downloads on Apache. On Nginx, add:
+Lists and records are stored in `wp-content/uploads/khrlzhfr-simple-csv-mailer/` (each site's own uploads folder on multisite). Every file name has a long random part so it can't be guessed, and an `.htaccess` file also blocks direct downloads on Apache. On Nginx you can add:
 
-`location ^~ /wp-content/uploads/mailer/ { deny all; }`
+`location ^~ /wp-content/uploads/khrlzhfr-simple-csv-mailer/ { deny all; }`
 
 File names also include a random string. Delete lists when you no longer need them.
 
@@ -42,7 +42,7 @@ File names also include a random string. Delete lists when you no longer need th
 This plugin only connects to other sites in two cases, and only when you ask it to:
 
 * **Import from URL:** it downloads the CSV from the address you enter, for example a Google Sheet (`docs.google.com`), a file in Google Drive (`drive.google.com`) or Dropbox (`dropbox.com`). Only the request for that file is sent.
-* **Attachments:** when you list an attachment URL that is not on your own site, it downloads that file once (cached for a day) to attach it to the emails.
+* **Attachments:** when you list an attachment URL that is not a Media Library file, it downloads that file once (cached for a day) to attach it to the emails.
 
 Nothing else is sent anywhere by the plugin itself. Google's [Terms of Service](https://policies.google.com/terms) and [Privacy Policy](https://policies.google.com/privacy), or Dropbox's [Terms](https://www.dropbox.com/terms) and [Privacy Policy](https://www.dropbox.com/privacy), apply to files fetched from them. Emails are sent with `wp_mail()` through whatever mail service your site uses.
 
@@ -80,12 +80,14 @@ WP-Cron runs when someone visits the site, so on a quiet site a scheduled send c
 
 = I used an earlier version. Where are my lists? =
 
-Versions before 1.2.0 kept files in `wp-content/mailer/`. They are moved to `wp-content/uploads/mailer/` automatically the first time you open Tools → Mailer after updating.
+Versions before 1.5.0 kept files in `wp-content/uploads/mailer/`. They are moved to `wp-content/uploads/khrlzhfr-simple-csv-mailer/`, with your drafts and queued sends, the first time an administrator screen loads after updating.
 
 == Changelog ==
 
 = 1.5.0 =
 * Import a list from a URL, including Google Sheets, Google Drive and Dropbox sharing links. The address is remembered for the next import.
+* Files now live in `uploads/khrlzhfr-simple-csv-mailer/` and every file name has a long random part. Existing lists, drafts and queued sends are moved across automatically.
+* Attachments from this site are read from disk only when they are in the Media Library; other site addresses are downloaded like any other URL.
 * An email cell can hold several addresses, separated by commas, semicolons, spaces or line breaks. Reply-To, Cc and Bcc accept the same separators.
 
 = 1.4.0 =
@@ -107,7 +109,7 @@ Versions before 1.2.0 kept files in `wp-content/mailer/`. They are moved to `wp-
 == Upgrade Notice ==
 
 = 1.5.0 =
-Lists can be imported from a URL, such as a Google Sheet, and a row can go to several addresses.
+Lists can be imported from a URL and a row can go to several addresses. Files and settings move to new names automatically the first time an administrator screen loads.
 
 = 1.4.0 =
 New name and folder. Install this version first, then delete the old copy; your settings and data are kept.

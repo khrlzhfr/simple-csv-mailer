@@ -1,13 +1,13 @@
-.wrap.scm{max-width:900px}
-.scm .scm-tags .button{margin:0 .4em .4em 0}
-.scm .small-text{width:5em}
-.scm .upload-plugin{display:none;margin:0;padding:50px 0;position:relative;text-align:center}
-.scm.show-upload-view .upload-plugin{display:block}
-.scm .upload-plugin .wp-upload-form{background:#f6f7f7;border:1px solid #c3c4c7;margin:30px auto;display:inline-flex;justify-content:space-between;align-items:center}
-.scm .upload-plugin input[type=url]{width:32em;max-width:60vw;margin-right:8px}
-.scm .upload-plugin .install-help{color:#50575e;font-size:18px;font-style:normal;margin:0;padding:0;text-align:center}
-.scm .upload-view-toggle .browse{display:none}
-.scm.show-upload-view .upload-view-toggle .browse{display:inline}
-.scm.show-upload-view .upload-view-toggle .upload{display:none}
-.scm .scm-actions{white-space:nowrap}
-.scm .scm-inline{display:inline}
+.wrap.khrlscm{max-width:900px}
+.khrlscm .khrlscm-tags .button{margin:0 .4em .4em 0}
+.khrlscm .small-text{width:5em}
+.khrlscm .upload-plugin{display:none;margin:0;padding:50px 0;position:relative;text-align:center}
+.khrlscm.show-upload-view .upload-plugin{display:block}
+.khrlscm .upload-plugin .wp-upload-form{background:#f6f7f7;border:1px solid #c3c4c7;margin:30px auto;display:inline-flex;justify-content:space-between;align-items:center}
+.khrlscm .upload-plugin input[type=url]{width:32em;max-width:60vw;margin-right:8px}
+.khrlscm .upload-plugin .install-help{color:#50575e;font-size:18px;font-style:normal;margin:0;padding:0;text-align:center}
+.khrlscm .upload-view-toggle .browse{display:none}
+.khrlscm.show-upload-view .upload-view-toggle .browse{display:inline}
+.khrlscm.show-upload-view .upload-view-toggle .upload{display:none}
+.khrlscm .khrlscm-actions{white-space:nowrap}
+.khrlscm .khrlscm-inline{display:inline}

@@ -8,12 +8,12 @@ defined( 'ABSPATH' ) || exit;
  * the chosen rate for up to RUN_FOR seconds, writes each result into the CSV's
  * email_status column, then schedules the next run until every row has a status.
  */
-final class SCM_Mailer {
+final class KHRLSCM_Mailer {
 
 	const CAP        = 'edit_others_posts'; // Editors and above.
-	const SLUG       = 'scm-mailer';
+	const SLUG       = 'khrlscm-mailer';
 	const MAX_BATCH  = 20;                  // Emails per batch.
-	const HOOK       = 'scm_send';          // WP-Cron event that sends one list; its argument is the file name.
+	const HOOK       = 'khrlscm_send';          // WP-Cron event that sends one list; its argument is the file name.
 	const RUN_FOR    = 20;                  // Seconds of sending per background run, well under PHP time limits.
 	const MAX_UPLOAD = 5242880;             // 5 MB.
 	const MAX_ATTACH = 10485760;            // 10 MB per email.
@@ -38,23 +38,101 @@ final class SCM_Mailer {
 
 	/* ---------- Storage ---------- */
 
-	/** wp-content/uploads/mailer (uploads/sites/{ID}/mailer on multisite). */
+	/** uploads/khrlzhfr-simple-csv-mailer (uploads/sites/{ID}/… on multisite). */
 	public static function dir() {
 		$uploads = wp_upload_dir( null, false );
-		return untrailingslashit( $uploads['basedir'] ) . '/mailer';
+		return untrailingslashit( $uploads['basedir'] ) . '/khrlzhfr-simple-csv-mailer';
 	}
 
-	/** Versions before 1.2.0 kept files in wp-content/mailer. Moves them once. */
+	/**
+	 * A new file name: $base plus a long random part, so stored lists and records
+	 * can't be guessed even on servers that ignore the folder's .htaccess.
+	 */
+	public static function new_name( $base, $ext = 'csv' ) {
+		return $base . '-' . strtolower( wp_generate_password( 24, false ) ) . '.' . $ext;
+	}
+
+	/** A file name without its random part and extension, for building related names. */
+	public static function base( $name ) {
+		return preg_replace( '/(-[a-z0-9]{24})?\.(csv|txt)$/', '', basename( (string) $name ) );
+	}
+
+	/** A file name as shown on screen: without the random part. */
+	public static function label( $name ) {
+		return self::base( $name ) . '.csv';
+	}
+
+	/**
+	 * Versions before 1.5.0 used the scm_ prefix and an uploads/mailer folder with
+	 * guessable file names. Moves that data to the current names once, then removes
+	 * the old entries. The old names below are only read and deleted.
+	 */
 	public static function migrate_storage() {
-		if ( get_option( 'scm_storage_version' ) ) {
+		global $wpdb;
+		if ( (int) get_option( 'khrlscm_storage_version' ) >= 3 ) {
 			return;
 		}
-		$old = untrailingslashit( WP_CONTENT_DIR ) . '/mailer';
-		$new = self::dir();
-		if ( is_dir( $old ) && ! file_exists( $new ) && wp_mkdir_p( dirname( $new ) ) ) {
-			rename( $old, $new ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- one-time move of this plugin's own folder.
+		$uploads = wp_upload_dir( null, false );
+		$old     = untrailingslashit( $uploads['basedir'] ) . '/mailer';
+		$new     = self::dir();
+		if ( is_dir( $old ) && ! file_exists( $new ) ) {
+			rename( $old, $new ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename -- one-time move of this plugin's own folder within uploads.
 		}
-		update_option( 'scm_storage_version', 2, false );
+
+		// Give every stored file a random part; a list and its record keep matching names.
+		$map = [];
+		if ( is_dir( $new ) ) {
+			foreach ( glob( $new . '/*.csv' ) ?: [] as $f ) {
+				$name = basename( $f );
+				if ( preg_match( '/-[a-z0-9]{24}\.csv$/', $name ) ) {
+					continue;
+				}
+				$to = self::new_name( preg_replace( '/\.csv$/', '', $name ) );
+				if ( rename( $f, "$new/$to" ) ) { // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+					$map[ $name ] = $to;
+					$txt          = preg_replace( '/\.csv$/', '.txt', $f );
+					if ( is_file( $txt ) ) {
+						rename( $txt, "$new/" . preg_replace( '/\.csv$/', '.txt', $to ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.rename_rename
+					}
+				}
+			}
+			self::ensure_dir();
+		}
+
+		// Sending jobs and their WP-Cron events.
+		$jobs = $wpdb->get_col( "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE 'scm\\_job\\_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		foreach ( $jobs as $key ) {
+			$job = get_option( $key );
+			delete_option( $key );
+			if ( ! is_array( $job ) || empty( $job['file'] ) || ! isset( $map[ $job['file'] ] ) ) {
+				continue;
+			}
+			$when        = wp_next_scheduled( 'scm_send', [ $job['file'] ] );
+			$job['file'] = $map[ $job['file'] ];
+			update_option( self::job_key( $job['file'] ), $job, false );
+			if ( $when ) {
+				wp_schedule_single_event( $when, self::HOOK, [ $job['file'] ] );
+			}
+		}
+		wp_unschedule_hook( 'scm_send' );
+		$wpdb->query( "DELETE FROM {$wpdb->options} WHERE option_name LIKE '\\_transient\\_scm\\_%' OR option_name LIKE '\\_transient\\_timeout\\_scm\\_%'" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		delete_option( 'scm_storage_version' );
+
+		// Each user's draft, selected list and import address.
+		foreach ( [ 'draft', 'last_file', 'csv_url' ] as $k ) {
+			foreach ( get_users( [ 'meta_key' => 'scm_' . $k, 'fields' => 'ID' ] ) as $uid ) { // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_key
+				$v = get_user_meta( $uid, 'scm_' . $k, true );
+				if ( 'last_file' === $k && isset( $map[ $v ] ) ) {
+					$v = $map[ $v ];
+				} elseif ( 'draft' === $k && is_array( $v ) && isset( $v['file'], $map[ $v['file'] ] ) ) {
+					$v['file'] = $map[ $v['file'] ];
+				}
+				update_user_meta( $uid, 'khrlscm_' . $k, $v );
+				delete_user_meta( $uid, 'scm_' . $k );
+			}
+		}
+
+		update_option( 'khrlscm_storage_version', 3, false );
 	}
 
 	public static function ensure_dir() {
@@ -287,7 +365,7 @@ final class SCM_Mailer {
 			'cc'          => '',
 			'bcc'         => '',
 			'subject'     => self::post( 'subject' ),
-			'body'        => isset( $_POST['scm_body'] ) ? wp_kses_post( wp_unslash( $_POST['scm_body'] ) ) : '', // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nonce checked in early_actions().
+			'body'        => isset( $_POST['khrlscm_body'] ) ? wp_kses_post( wp_unslash( $_POST['khrlscm_body'] ) ) : '', // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nonce checked in early_actions().
 			'attachments' => implode( "\n", array_filter( array_map( 'trim', preg_split( '/\R/', self::post_lines( 'attachments' ) ) ) ) ),
 			'count'       => max( 1, min( self::MAX_BATCH, (int) self::post( 'rate_count' ) ) ),
 			'seconds'     => max( 1, min( 3600, (int) self::post( 'rate_seconds' ) ) ),
@@ -366,21 +444,15 @@ final class SCM_Mailer {
 		if ( ! $url ) {
 			return false;
 		}
-		$uploads = wp_get_upload_dir();
-		$site    = untrailingslashit( home_url() );
-		$base    = untrailingslashit( $uploads['baseurl'] );
-		$local   = false;
-		if ( 0 === strpos( $url, $base . '/' ) ) {
-			$local = $uploads['basedir'] . '/' . rawurldecode( strtok( substr( $url, strlen( $base ) + 1 ), '?#' ) );
-		} elseif ( 0 === strpos( $url, $site . '/' ) ) {
-			$local = ABSPATH . rawurldecode( strtok( substr( $url, strlen( $site ) + 1 ), '?#' ) );
-		}
-		if ( $local ) {
-			$real = realpath( $local );
-			if ( $real && is_file( $real ) && 0 === strpos( $real, realpath( ABSPATH ) ) ) {
-				return [ 'path' => $real, 'name' => basename( $real ) ];
+		// A file in the Media Library is read from disk. Anything else, including other
+		// files on this site, is downloaded like any visitor would, so the server's own
+		// access rules apply and nothing outside the Media Library can be attached.
+		$id = attachment_url_to_postid( strtok( $url, '?#' ) );
+		if ( $id ) {
+			$file = get_attached_file( $id );
+			if ( $file && is_file( $file ) ) {
+				return [ 'path' => $file, 'name' => wp_basename( $file ) ];
 			}
-			// Fall through: pretty URLs that are not files on disk get downloaded.
 		}
 		$name  = sanitize_file_name( rawurldecode( basename( (string) wp_parse_url( $url, PHP_URL_PATH ) ) ) );
 		$name  = $name ? $name : 'attachment';
@@ -448,11 +520,11 @@ final class SCM_Mailer {
 	/* ---------- Jobs ---------- */
 
 	public static function job_key( $file ) {
-		return 'scm_job_' . md5( $file );
+		return 'khrlscm_job_' . md5( $file );
 	}
 
 	public static function lock_key( $file ) {
-		return 'scm_lock_' . md5( $file );
+		return 'khrlscm_lock_' . md5( $file );
 	}
 
 	/** Sends one batch. Returns ['sent'=>n, 'remaining'=>n, 'failed'=>n, 'done'=>bool] or null. */
@@ -552,7 +624,7 @@ final class SCM_Mailer {
 		if ( ! $path ) {
 			return false;
 		}
-		$base = 'completed_' . self::stamp() . '_' . preg_replace( '/\.csv$/', '', $job['file'] );
+		$base = preg_replace( '/\.csv$/', '', self::new_name( 'completed_' . self::stamp() . '_' . self::base( $job['file'] ) ) );
 		$txt  = implode(
 			"\n",
 			[
@@ -594,7 +666,7 @@ final class SCM_Mailer {
 	public static function notice( $html, $type = 'success', $alert = '', $user = 0 ) {
 		$user = $user ? $user : get_current_user_id();
 		if ( $user ) {
-			set_transient( 'scm_notice_' . $user, [ $html, $type, $alert ], WEEK_IN_SECONDS );
+			set_transient( 'khrlscm_notice_' . $user, [ $html, $type, $alert ], WEEK_IN_SECONDS );
 		}
 	}
 
@@ -613,14 +685,14 @@ final class SCM_Mailer {
 		}
 
 		if ( '' !== self::get( 'download' ) ) {
-			check_admin_referer( 'scm_download' );
+			check_admin_referer( 'khrlscm_download' );
 			$path = self::path( self::get( 'download' ) );
 			if ( ! $path ) {
 				wp_die( esc_html__( 'File not found.', 'khrlzhfr-simple-csv-mailer' ) );
 			}
 			nocache_headers();
 			header( 'Content-Type: ' . ( substr( $path, -4 ) === '.csv' ? 'text/csv' : 'text/plain' ) . '; charset=UTF-8' );
-			header( 'Content-Disposition: attachment; filename="' . basename( $path ) . '"' );
+			header( 'Content-Disposition: attachment; filename="' . self::base( $path ) . '.' . pathinfo( $path, PATHINFO_EXTENSION ) . '"' );
 			$csv = substr( $path, -4 ) === '.csv' ? self::read( $path ) : null;
 			if ( $csv ) {
 				echo self::download_csv( $csv['headers'], $csv['rows'] ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- plain CSV download, not HTML.
@@ -632,10 +704,10 @@ final class SCM_Mailer {
 		}
 
 		$method = isset( $_SERVER['REQUEST_METHOD'] ) ? sanitize_key( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
-		if ( 'post' === $method && isset( $_POST['scm_action'] ) ) {
-			check_admin_referer( 'scm_form' );
+		if ( 'post' === $method && isset( $_POST['khrlscm_action'] ) ) {
+			check_admin_referer( 'khrlscm_form' );
 			self::ensure_dir();
-			self::handle_post( sanitize_key( wp_unslash( $_POST['scm_action'] ) ) );
+			self::handle_post( sanitize_key( wp_unslash( $_POST['khrlscm_action'] ) ) );
 			return;
 		}
 	}
@@ -644,9 +716,9 @@ final class SCM_Mailer {
 		if ( '' === self::$hook || $hook !== self::$hook ) {
 			return;
 		}
-		wp_enqueue_style( 'scm-admin', plugins_url( 'assets/admin.css', SCM_FILE ), [], SCM_VERSION );
+		wp_enqueue_style( 'khrlscm-admin', plugins_url( 'assets/admin.css', KHRLSCM_FILE ), [], KHRLSCM_VERSION );
 
-		$n    = get_transient( 'scm_notice_' . get_current_user_id() );
+		$n    = get_transient( 'khrlscm_notice_' . get_current_user_id() );
 		$data = [
 			'lists'   => self::pending(),
 			'from'    => '@' . self::domain(),
@@ -667,8 +739,8 @@ final class SCM_Mailer {
 				'seconds' => __( 'seconds', 'khrlzhfr-simple-csv-mailer' ),
 			],
 		];
-		wp_enqueue_script( 'scm-admin', plugins_url( 'assets/admin.js', SCM_FILE ), [], SCM_VERSION, true );
-		wp_add_inline_script( 'scm-admin', 'window.scmData = ' . wp_json_encode( $data ) . ';', 'before' );
+		wp_enqueue_script( 'khrlscm-admin', plugins_url( 'assets/admin.js', KHRLSCM_FILE ), [], KHRLSCM_VERSION, true );
+		wp_add_inline_script( 'khrlscm-admin', 'window.khrlscmData = ' . wp_json_encode( $data ) . ';', 'before' );
 	}
 
 	/** Lists that can be sent, with counts and merge tags. */
@@ -737,9 +809,9 @@ final class SCM_Mailer {
 	 */
 	private static function fetch_csv( $url ) {
 		if ( ! preg_match( '~^https?://~i', (string) $url ) || ! wp_http_validate_url( $url ) ) {
-			return new WP_Error( 'scm_url', __( 'Enter a full web address, starting with https://', 'khrlzhfr-simple-csv-mailer' ) );
+			return new WP_Error( 'khrlscm_url', __( 'Enter a full web address, starting with https://', 'khrlzhfr-simple-csv-mailer' ) );
 		}
-		$tmp = wp_tempnam( 'scm-import.csv' );
+		$tmp = wp_tempnam( 'khrlscm-import.csv' );
 		$res = wp_safe_remote_get(
 			self::download_url( $url ),
 			[
@@ -767,7 +839,7 @@ final class SCM_Mailer {
 		}
 		if ( null !== $error ) {
 			wp_delete_file( $tmp );
-			return new WP_Error( 'scm_url', $error );
+			return new WP_Error( 'khrlscm_url', $error );
 		}
 		return $tmp;
 	}
@@ -777,15 +849,15 @@ final class SCM_Mailer {
 		$base = preg_replace( '/[^A-Za-z0-9_-]+/', '_', (string) $base );
 		$base = preg_replace( '/^completed_/', '', trim( (string) $base, '_' ) );
 		$base = '' !== $base ? $base : 'list';
-		$name = sprintf( '%s_%s_%s.csv', $base, self::stamp(), strtolower( wp_generate_password( 6, false ) ) );
+		$name = self::new_name( $base . '_' . self::stamp() );
 		// Save the parsed rows rather than the raw file, so the stored list is a clean CSV.
 		if ( ! self::write( self::dir() . "/$name", $csv['headers'], $csv['rows'] ) ) {
 			self::notice( esc_html__( 'Could not save the file.', 'khrlzhfr-simple-csv-mailer' ), 'error' );
 			self::redirect( self::url() );
 		}
-		update_user_meta( get_current_user_id(), 'scm_last_file', $name );
+		update_user_meta( get_current_user_id(), 'khrlscm_last_file', $name );
 		/* translators: 1: file name, 2: number of recipients */
-		self::notice( esc_html( sprintf( __( 'Added %1$s (%2$d recipients).', 'khrlzhfr-simple-csv-mailer' ), $name, self::recipients( $csv ) ) ) );
+		self::notice( esc_html( sprintf( __( 'Added %1$s (%2$d recipients).', 'khrlzhfr-simple-csv-mailer' ), self::label( $name ), self::recipients( $csv ) ) ) );
 		self::redirect( self::url() );
 	}
 
@@ -818,7 +890,7 @@ final class SCM_Mailer {
 
 		if ( 'import_url' === $action ) {
 			$url = esc_url_raw( self::post( 'csv_url' ) );
-			update_user_meta( $uid, 'scm_csv_url', $url );
+			update_user_meta( $uid, 'khrlscm_csv_url', $url );
 			$tmp = self::fetch_csv( $url );
 			if ( is_wp_error( $tmp ) ) {
 				self::notice( esc_html( $tmp->get_error_message() ), 'error' );
@@ -852,7 +924,7 @@ final class SCM_Mailer {
 				delete_option( self::job_key( $name ) );
 				wp_clear_scheduled_hook( self::HOOK, [ $name ] );
 				/* translators: %s: file name */
-				self::notice( esc_html( sprintf( __( 'Deleted %s.', 'khrlzhfr-simple-csv-mailer' ), $name ) ) );
+				self::notice( esc_html( sprintf( __( 'Deleted %s.', 'khrlzhfr-simple-csv-mailer' ), self::label( $name ) ) ) );
 			}
 			self::redirect( self::url() );
 		}
@@ -875,12 +947,12 @@ final class SCM_Mailer {
 				self::notice( esc_html__( 'No failed rows to retry.', 'khrlzhfr-simple-csv-mailer' ), 'warning' );
 				self::redirect( self::url() );
 			}
-			$base = preg_replace( [ '/^completed_\d{8}_\d{6}_/', '/\.csv$/' ], '', $name );
-			$new  = sprintf( 'retry_%s_%s.csv', $base, self::stamp() );
+			$base = preg_replace( '/^completed_\d{8}_\d{6}_/', '', self::base( $name ) );
+			$new  = self::new_name( sprintf( 'retry_%s_%s', $base, self::stamp() ) );
 			self::write( self::dir() . "/$new", $csv['headers'], $rows );
-			update_user_meta( $uid, 'scm_last_file', $new );
+			update_user_meta( $uid, 'khrlscm_last_file', $new );
 			/* translators: 1: file name, 2: number of rows */
-			self::notice( esc_html( sprintf( __( 'Created %1$s with %2$d failed rows. Select it under To and send again.', 'khrlzhfr-simple-csv-mailer' ), $new, count( $rows ) ) ) );
+			self::notice( esc_html( sprintf( __( 'Created %1$s with %2$d failed rows. Select it under To and send again.', 'khrlzhfr-simple-csv-mailer' ), self::label( $new ), count( $rows ) ) ) );
 			self::redirect( self::url() );
 		}
 
@@ -892,13 +964,13 @@ final class SCM_Mailer {
 					delete_option( self::job_key( $name ) );
 					wp_clear_scheduled_hook( self::HOOK, [ $name ] );
 					/* translators: %s: file name */
-					self::notice( esc_html( sprintf( __( 'Cancelled %s. Rows already sent keep their status; the rest stay unsent.', 'khrlzhfr-simple-csv-mailer' ), $name ) ) );
+					self::notice( esc_html( sprintf( __( 'Cancelled %s. Rows already sent keep their status; the rest stay unsent.', 'khrlzhfr-simple-csv-mailer' ), self::label( $name ) ) ) );
 				} elseif ( 'pause' === $action ) {
 					$job['state'] = 'paused';
 					update_option( self::job_key( $name ), $job, false );
 					wp_clear_scheduled_hook( self::HOOK, [ $name ] );
 					/* translators: %s: file name */
-					self::notice( esc_html( sprintf( __( 'Paused %s. Emails already being sent finish first.', 'khrlzhfr-simple-csv-mailer' ), $name ) ) );
+					self::notice( esc_html( sprintf( __( 'Paused %s. Emails already being sent finish first.', 'khrlzhfr-simple-csv-mailer' ), self::label( $name ) ) ) );
 				} else {
 					$job['state'] = 'sending';
 					unset( $job['error'] );
@@ -906,7 +978,7 @@ final class SCM_Mailer {
 					update_option( self::job_key( $name ), $job, false );
 					self::schedule( $name );
 					/* translators: %s: file name */
-					self::notice( esc_html( sprintf( __( 'Resumed %s. It continues in the background.', 'khrlzhfr-simple-csv-mailer' ), $name ) ) );
+					self::notice( esc_html( sprintf( __( 'Resumed %s. It continues in the background.', 'khrlzhfr-simple-csv-mailer' ), self::label( $name ) ) ) );
 				}
 			}
 			self::redirect( self::url() );
@@ -914,8 +986,8 @@ final class SCM_Mailer {
 
 		// Test and send share the compose form.
 		list( $job, $errors ) = self::job_from_post();
-		update_user_meta( $uid, 'scm_draft', $job );
-		update_user_meta( $uid, 'scm_last_file', $job['file'] );
+		update_user_meta( $uid, 'khrlscm_draft', $job );
+		update_user_meta( $uid, 'khrlscm_last_file', $job['file'] );
 		$path = self::path( $job['file'] );
 		$csv  = $path ? self::read( $path ) : null;
 		if ( ! $csv || false === $csv['email'] ) {
@@ -980,10 +1052,10 @@ final class SCM_Mailer {
 
 			if ( $job['send_at'] ) {
 				/* translators: 1: file name, 2: date and time */
-				self::notice( esc_html( sprintf( __( '%1$s will be sent from %2$s. You can close this page.', 'khrlzhfr-simple-csv-mailer' ), $job['file'], wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $job['send_at'] ) ) ) );
+				self::notice( esc_html( sprintf( __( '%1$s will be sent from %2$s. You can close this page.', 'khrlzhfr-simple-csv-mailer' ), self::label( $job['file'] ), wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $job['send_at'] ) ) ) );
 			} else {
 				/* translators: %s: file name */
-				self::notice( esc_html( sprintf( __( 'Sending %s in the background. You can close this page; progress is shown under Queue.', 'khrlzhfr-simple-csv-mailer' ), $job['file'] ) ) );
+				self::notice( esc_html( sprintf( __( 'Sending %s in the background. You can close this page; progress is shown under Queue.', 'khrlzhfr-simple-csv-mailer' ), self::label( $job['file'] ) ) ) );
 			}
 			self::redirect( self::url() );
 		}
@@ -1088,7 +1160,7 @@ final class SCM_Mailer {
 		if ( $res['done'] ) {
 			$done = self::complete( $job );
 			/* translators: %s: completed file name */
-			$msg = sprintf( __( 'Sending complete. %s', 'khrlzhfr-simple-csv-mailer' ), $done );
+			$msg = sprintf( __( 'Sending complete. %s', 'khrlzhfr-simple-csv-mailer' ), $done ? self::label( $done ) : '' );
 			if ( $res['failed'] ) {
 				/* translators: %d: number of failed rows */
 				$msg .= ' ' . sprintf( __( '(%d failed: use "Retry failed" under Completed)', 'khrlzhfr-simple-csv-mailer' ), $res['failed'] );
@@ -1161,7 +1233,7 @@ final class SCM_Mailer {
 
 	private static function main_page() {
 		$uid   = get_current_user_id();
-		$saved = get_user_meta( $uid, 'scm_draft', true );
+		$saved = get_user_meta( $uid, 'khrlscm_draft', true );
 		$draft = wp_parse_args(
 			is_array( $saved ) ? $saved : [],
 			[
@@ -1177,23 +1249,23 @@ final class SCM_Mailer {
 				'seconds'     => 3,
 			]
 		);
-		$last    = get_user_meta( $uid, 'scm_last_file', true );
+		$last    = get_user_meta( $uid, 'khrlscm_last_file', true );
 		$jobs    = self::jobs();
 		$pending = array_diff_key( self::pending(), $jobs ); // Lists in the queue can't be sent again until they finish or are cancelled.
 		$domain  = self::domain();
 
-		$n = get_transient( 'scm_notice_' . $uid );
+		$n = get_transient( 'khrlscm_notice_' . $uid );
 		if ( is_array( $n ) ) {
-			delete_transient( 'scm_notice_' . $uid );
+			delete_transient( 'khrlscm_notice_' . $uid );
 			printf( '<div class="notice notice-%s is-dismissible"><p>%s</p></div>', esc_attr( $n[1] ), wp_kses_post( $n[0] ) );
 		}
 		?>
-		<div class="wrap scm">
+		<div class="wrap khrlscm">
 			<h1 class="wp-heading-inline"><?php esc_html_e( 'Mailer', 'khrlzhfr-simple-csv-mailer' ); ?></h1>
-			<a href="#" class="upload-view-toggle page-title-action" id="scm-upload-toggle" role="button" aria-expanded="false"><span class="upload"><?php esc_html_e( 'Upload CSV', 'khrlzhfr-simple-csv-mailer' ); ?></span><span class="browse"><?php esc_html_e( 'Close', 'khrlzhfr-simple-csv-mailer' ); ?></span></a>
+			<a href="#" class="upload-view-toggle page-title-action" id="khrlscm-upload-toggle" role="button" aria-expanded="false"><span class="upload"><?php esc_html_e( 'Upload CSV', 'khrlzhfr-simple-csv-mailer' ); ?></span><span class="browse"><?php esc_html_e( 'Close', 'khrlzhfr-simple-csv-mailer' ); ?></span></a>
 			<hr class="wp-header-end">
 
-			<div class="upload-plugin" id="scm-upload">
+			<div class="upload-plugin" id="khrlscm-upload">
 				<p class="install-help">
 					<?php
 					/* translators: %s: the word email in code formatting */
@@ -1201,18 +1273,18 @@ final class SCM_Mailer {
 					?>
 				</p>
 				<form method="post" enctype="multipart/form-data" class="wp-upload-form">
-					<?php wp_nonce_field( 'scm_form' ); ?>
-					<input type="hidden" name="scm_action" value="upload">
-					<label class="screen-reader-text" for="scm-csv"><?php esc_html_e( 'CSV file', 'khrlzhfr-simple-csv-mailer' ); ?></label>
-					<input type="file" name="csv" id="scm-csv" accept=".csv,text/csv" required>
+					<?php wp_nonce_field( 'khrlscm_form' ); ?>
+					<input type="hidden" name="khrlscm_action" value="upload">
+					<label class="screen-reader-text" for="khrlscm-csv"><?php esc_html_e( 'CSV file', 'khrlzhfr-simple-csv-mailer' ); ?></label>
+					<input type="file" name="csv" id="khrlscm-csv" accept=".csv,text/csv" required>
 					<input type="submit" class="button" value="<?php esc_attr_e( 'Upload', 'khrlzhfr-simple-csv-mailer' ); ?>" disabled>
 				</form>
 				<p class="install-help"><?php esc_html_e( 'Or import it from a web address, such as a Google Sheet:', 'khrlzhfr-simple-csv-mailer' ); ?></p>
 				<form method="post" class="wp-upload-form">
-					<?php wp_nonce_field( 'scm_form' ); ?>
-					<input type="hidden" name="scm_action" value="import_url">
-					<label class="screen-reader-text" for="scm-csv-url"><?php esc_html_e( 'CSV address', 'khrlzhfr-simple-csv-mailer' ); ?></label>
-					<input type="url" name="csv_url" id="scm-csv-url" class="code" value="<?php echo esc_attr( (string) get_user_meta( get_current_user_id(), 'scm_csv_url', true ) ); ?>" placeholder="https://docs.google.com/spreadsheets/d/…" required>
+					<?php wp_nonce_field( 'khrlscm_form' ); ?>
+					<input type="hidden" name="khrlscm_action" value="import_url">
+					<label class="screen-reader-text" for="khrlscm-csv-url"><?php esc_html_e( 'CSV address', 'khrlzhfr-simple-csv-mailer' ); ?></label>
+					<input type="url" name="csv_url" id="khrlscm-csv-url" class="code" value="<?php echo esc_attr( (string) get_user_meta( get_current_user_id(), 'khrlscm_csv_url', true ) ); ?>" placeholder="https://docs.google.com/spreadsheets/d/…" required>
 					<input type="submit" class="button" value="<?php esc_attr_e( 'Import', 'khrlzhfr-simple-csv-mailer' ); ?>">
 				</form>
 				<p class="description"><?php esc_html_e( 'Paste the sharing link of a Google Sheet (the tab in the link is used) or of a CSV file in Google Drive or Dropbox, or any public CSV address. Share it so anyone with the link can view it. Each import adds a new list, like an upload.', 'khrlzhfr-simple-csv-mailer' ); ?></p>
@@ -1233,26 +1305,26 @@ final class SCM_Mailer {
 				<p><?php esc_html_e( 'To avoid bounces and abuse complaints: remove addresses that bounced last time before sending again, keep the list fresh so old addresses are not reused, say who you are and why the recipient is hearing from you, set a Reply-To that someone reads, and tell people how to stop receiving your emails. Send a test to yourself first, and keep the rate low. Too many bounces or complaints can get the site\'s sending address blocked.', 'khrlzhfr-simple-csv-mailer' ); ?></p>
 			</div>
 
-			<form method="post" id="scm-compose">
-				<?php wp_nonce_field( 'scm_form' ); ?>
-				<input type="hidden" name="scm_action" id="scm-action" value="test">
+			<form method="post" id="khrlscm-compose">
+				<?php wp_nonce_field( 'khrlscm_form' ); ?>
+				<input type="hidden" name="khrlscm_action" id="khrlscm-action" value="test">
 				<table class="form-table" role="presentation">
 					<tr>
-						<th scope="row"><label for="scm-file"><?php esc_html_e( 'To', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+						<th scope="row"><label for="khrlscm-file"><?php esc_html_e( 'To', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
 						<td>
 							<?php if ( ! $pending ) : ?>
 								<p><?php echo $jobs ? esc_html__( 'Every uploaded list is in the queue below. Upload another CSV to send something else.', 'khrlzhfr-simple-csv-mailer' ) : esc_html__( 'No CSV uploaded yet.', 'khrlzhfr-simple-csv-mailer' ); ?></p>
 							<?php else : ?>
-								<select name="file" id="scm-file" required>
+								<select name="file" id="khrlscm-file" required>
 									<?php foreach ( $pending as $name => $info ) : ?>
 										<option value="<?php echo esc_attr( $name ); ?>" <?php selected( $name, $last ); ?>>
 											<?php
 											echo esc_html(
 												$info['done']
 													/* translators: 1: file name, 2: number of recipients, 3: number already processed */
-													? sprintf( __( '%1$s (%2$d recipients, %3$d already processed)', 'khrlzhfr-simple-csv-mailer' ), $name, $info['count'], $info['done'] )
+													? sprintf( __( '%1$s (%2$d recipients, %3$d already processed)', 'khrlzhfr-simple-csv-mailer' ), self::label( $name ), $info['count'], $info['done'] )
 													/* translators: 1: file name, 2: number of recipients */
-													: sprintf( __( '%1$s (%2$d recipients)', 'khrlzhfr-simple-csv-mailer' ), $name, $info['count'] )
+													: sprintf( __( '%1$s (%2$d recipients)', 'khrlzhfr-simple-csv-mailer' ), self::label( $name ), $info['count'] )
 											);
 											?>
 										</option>
@@ -1268,35 +1340,35 @@ final class SCM_Mailer {
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="scm-from-name"><?php esc_html_e( 'From name', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
-						<td><input type="text" name="from_name" id="scm-from-name" class="regular-text" value="<?php echo esc_attr( $draft['from_name'] ); ?>" placeholder="<?php echo esc_attr( get_bloginfo( 'name' ) ); ?>"></td>
+						<th scope="row"><label for="khrlscm-from-name"><?php esc_html_e( 'From name', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+						<td><input type="text" name="from_name" id="khrlscm-from-name" class="regular-text" value="<?php echo esc_attr( $draft['from_name'] ); ?>" placeholder="<?php echo esc_attr( get_bloginfo( 'name' ) ); ?>"></td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="scm-alias"><?php esc_html_e( 'From address', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+						<th scope="row"><label for="khrlscm-alias"><?php esc_html_e( 'From address', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
 						<td>
-							<input type="text" name="alias" id="scm-alias" required pattern="[A-Za-z0-9._+\-]+" value="<?php echo esc_attr( $draft['alias'] ); ?>" placeholder="noreply"> @<?php echo esc_html( $domain ); ?>
+							<input type="text" name="alias" id="khrlscm-alias" required pattern="[A-Za-z0-9._+\-]+" value="<?php echo esc_attr( $draft['alias'] ); ?>" placeholder="noreply"> @<?php echo esc_html( $domain ); ?>
 							<p class="description"><?php esc_html_e( 'Must be allowed by your mail service (for example a verified sender in Amazon SES). Some SMTP plugins replace the From address with their own.', 'khrlzhfr-simple-csv-mailer' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="scm-reply"><?php esc_html_e( 'Reply-To', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
-						<td><input type="text" name="reply_to" id="scm-reply" class="regular-text" value="<?php echo esc_attr( $draft['reply_to'] ); ?>" placeholder="<?php echo esc_attr( 'user1@' . $domain . ', user2@' . $domain ); ?>"></td>
+						<th scope="row"><label for="khrlscm-reply"><?php esc_html_e( 'Reply-To', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+						<td><input type="text" name="reply_to" id="khrlscm-reply" class="regular-text" value="<?php echo esc_attr( $draft['reply_to'] ); ?>" placeholder="<?php echo esc_attr( 'user1@' . $domain . ', user2@' . $domain ); ?>"></td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="scm-cc"><?php esc_html_e( 'Cc', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
-						<td><input type="text" name="cc" id="scm-cc" class="regular-text" value="<?php echo esc_attr( $draft['cc'] ); ?>" placeholder="<?php echo esc_attr( 'user3@' . $domain . ', user4@' . $domain ); ?>"></td>
+						<th scope="row"><label for="khrlscm-cc"><?php esc_html_e( 'Cc', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+						<td><input type="text" name="cc" id="khrlscm-cc" class="regular-text" value="<?php echo esc_attr( $draft['cc'] ); ?>" placeholder="<?php echo esc_attr( 'user3@' . $domain . ', user4@' . $domain ); ?>"></td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="scm-bcc"><?php esc_html_e( 'Bcc', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
-						<td><input type="text" name="bcc" id="scm-bcc" class="regular-text" value="<?php echo esc_attr( $draft['bcc'] ); ?>" placeholder="<?php echo esc_attr( 'user5@' . $domain . ', user6@' . $domain ); ?>"></td>
+						<th scope="row"><label for="khrlscm-bcc"><?php esc_html_e( 'Bcc', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+						<td><input type="text" name="bcc" id="khrlscm-bcc" class="regular-text" value="<?php echo esc_attr( $draft['bcc'] ); ?>" placeholder="<?php echo esc_attr( 'user5@' . $domain . ', user6@' . $domain ); ?>"></td>
 					</tr>
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Merge tags', 'khrlzhfr-simple-csv-mailer' ); ?></th>
-						<td><p class="scm-tags" id="scm-tags"></p></td>
+						<td><p class="khrlscm-tags" id="khrlscm-tags"></p></td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="scm-subject"><?php esc_html_e( 'Subject', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
-						<td><input type="text" name="subject" id="scm-subject" class="large-text" required value="<?php echo esc_attr( $draft['subject'] ); ?>"></td>
+						<th scope="row"><label for="khrlscm-subject"><?php esc_html_e( 'Subject', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+						<td><input type="text" name="subject" id="khrlscm-subject" class="large-text" required value="<?php echo esc_attr( $draft['subject'] ); ?>"></td>
 					</tr>
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Body', 'khrlzhfr-simple-csv-mailer' ); ?></th>
@@ -1304,9 +1376,9 @@ final class SCM_Mailer {
 							<?php
 							wp_editor(
 								$draft['body'],
-								'scm_body',
+								'khrlscm_body',
 								[
-									'textarea_name' => 'scm_body',
+									'textarea_name' => 'khrlscm_body',
 									'textarea_rows' => 16,
 									'media_buttons' => false,
 								]
@@ -1315,16 +1387,16 @@ final class SCM_Mailer {
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="scm-attachments"><?php esc_html_e( 'Attachments', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+						<th scope="row"><label for="khrlscm-attachments"><?php esc_html_e( 'Attachments', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
 						<td>
-							<textarea name="attachments" id="scm-attachments" class="large-text code" rows="3" placeholder="<?php echo esc_attr( content_url( 'uploads/2026/11/invitation.pdf' ) ); ?>"><?php echo esc_textarea( $draft['attachments'] ); ?></textarea>
+							<textarea name="attachments" id="khrlscm-attachments" class="large-text code" rows="3" placeholder="<?php echo esc_attr( wp_get_upload_dir()['baseurl'] . '/2026/11/invitation.pdf' ); ?>"><?php echo esc_textarea( $draft['attachments'] ); ?></textarea>
 							<p class="description"><?php esc_html_e( 'One URL per line. Merge tags work here, so a column can hold a different file for each person. Up to 10 MB per email.', 'khrlzhfr-simple-csv-mailer' ); ?></p>
 						</td>
 					</tr>
 					<tr>
-						<th scope="row"><label for="scm-test"><?php esc_html_e( 'Test', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+						<th scope="row"><label for="khrlscm-test"><?php esc_html_e( 'Test', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
 						<td>
-							<input type="email" name="test_to" id="scm-test" class="regular-text" placeholder="you@example.com">
+							<input type="email" name="test_to" id="khrlscm-test" class="regular-text" placeholder="you@example.com">
 							<button class="button" data-action="test"><?php esc_html_e( 'Send test', 'khrlzhfr-simple-csv-mailer' ); ?></button>
 						</td>
 					</tr>
@@ -1332,14 +1404,14 @@ final class SCM_Mailer {
 						<th scope="row"><?php esc_html_e( 'Sending rate', 'khrlzhfr-simple-csv-mailer' ); ?></th>
 						<td>
 							<label>
-								<input type="number" name="rate_count" id="scm-count" class="small-text" min="1" max="<?php echo (int) self::MAX_BATCH; ?>" value="<?php echo (int) $draft['count']; ?>">
+								<input type="number" name="rate_count" id="khrlscm-count" class="small-text" min="1" max="<?php echo (int) self::MAX_BATCH; ?>" value="<?php echo (int) $draft['count']; ?>">
 								<?php esc_html_e( 'email(s) every', 'khrlzhfr-simple-csv-mailer' ); ?>
 							</label>
 							<label>
-								<input type="number" name="rate_seconds" id="scm-seconds" class="small-text" min="1" max="3600" value="<?php echo (int) $draft['seconds']; ?>">
+								<input type="number" name="rate_seconds" id="khrlscm-seconds" class="small-text" min="1" max="3600" value="<?php echo (int) $draft['seconds']; ?>">
 								<?php esc_html_e( 'second(s)', 'khrlzhfr-simple-csv-mailer' ); ?>
 							</label>
-							<p class="description" id="scm-eta"></p>
+							<p class="description" id="khrlscm-eta"></p>
 						</td>
 					</tr>
 					<tr>
@@ -1348,9 +1420,9 @@ final class SCM_Mailer {
 							<fieldset>
 								<legend class="screen-reader-text"><?php esc_html_e( 'When', 'khrlzhfr-simple-csv-mailer' ); ?></legend>
 								<label><input type="radio" name="when" value="now" checked> <?php esc_html_e( 'Now', 'khrlzhfr-simple-csv-mailer' ); ?></label><br>
-								<label><input type="radio" name="when" value="later" id="scm-later"> <?php esc_html_e( 'At', 'khrlzhfr-simple-csv-mailer' ); ?></label>
-								<label class="screen-reader-text" for="scm-send-at"><?php esc_html_e( 'Date and time', 'khrlzhfr-simple-csv-mailer' ); ?></label>
-								<input type="datetime-local" name="send_at" id="scm-send-at" min="<?php echo esc_attr( wp_date( 'Y-m-d\TH:i' ) ); ?>">
+								<label><input type="radio" name="when" value="later" id="khrlscm-later"> <?php esc_html_e( 'At', 'khrlzhfr-simple-csv-mailer' ); ?></label>
+								<label class="screen-reader-text" for="khrlscm-send-at"><?php esc_html_e( 'Date and time', 'khrlzhfr-simple-csv-mailer' ); ?></label>
+								<input type="datetime-local" name="send_at" id="khrlscm-send-at" min="<?php echo esc_attr( wp_date( 'Y-m-d\TH:i' ) ); ?>">
 							</fieldset>
 							<p class="description">
 								<?php
@@ -1391,7 +1463,7 @@ final class SCM_Mailer {
 						$act = 'paused' === $job['state'] ? 'resume' : 'pause';
 						?>
 						<tr>
-							<td><?php echo esc_html( $name ); ?><br><span class="description"><?php echo esc_html( $job['subject'] ); ?></span></td>
+							<td><?php echo esc_html( self::label( $name ) ); ?><br><span class="description"><?php echo esc_html( $job['subject'] ); ?></span></td>
 							<td><?php echo esc_html( $status ); ?></td>
 							<td>
 								<?php
@@ -1399,9 +1471,9 @@ final class SCM_Mailer {
 								echo esc_html( sprintf( __( '%1$d of %2$d processed', 'khrlzhfr-simple-csv-mailer' ), $info['done'], $info['count'] ) );
 								?>
 							</td>
-							<td class="scm-actions">
-								<form method="post" class="scm-inline"><?php wp_nonce_field( 'scm_form' ); ?><input type="hidden" name="scm_action" value="<?php echo esc_attr( $act ); ?>"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button button-small"><?php echo 'resume' === $act ? esc_html__( 'Resume', 'khrlzhfr-simple-csv-mailer' ) : esc_html__( 'Pause', 'khrlzhfr-simple-csv-mailer' ); ?></button></form>
-								<form method="post" class="scm-inline" onsubmit="return confirm(<?php echo esc_attr( wp_json_encode( __( 'Cancel sending this list? Rows already sent keep their status.', 'khrlzhfr-simple-csv-mailer' ) ) ); ?>)"><?php wp_nonce_field( 'scm_form' ); ?><input type="hidden" name="scm_action" value="cancel"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button-link button-link-delete"><?php esc_html_e( 'Cancel', 'khrlzhfr-simple-csv-mailer' ); ?></button></form>
+							<td class="khrlscm-actions">
+								<form method="post" class="khrlscm-inline"><?php wp_nonce_field( 'khrlscm_form' ); ?><input type="hidden" name="khrlscm_action" value="<?php echo esc_attr( $act ); ?>"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button button-small"><?php echo 'resume' === $act ? esc_html__( 'Resume', 'khrlzhfr-simple-csv-mailer' ) : esc_html__( 'Pause', 'khrlzhfr-simple-csv-mailer' ); ?></button></form>
+								<form method="post" class="khrlscm-inline" onsubmit="return confirm(<?php echo esc_attr( wp_json_encode( __( 'Cancel sending this list? Rows already sent keep their status.', 'khrlzhfr-simple-csv-mailer' ) ) ); ?>)"><?php wp_nonce_field( 'khrlscm_form' ); ?><input type="hidden" name="khrlscm_action" value="cancel"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button-link button-link-delete"><?php esc_html_e( 'Cancel', 'khrlzhfr-simple-csv-mailer' ); ?></button></form>
 							</td>
 						</tr>
 					<?php endforeach; ?>
@@ -1450,19 +1522,19 @@ final class SCM_Mailer {
 						$txt = preg_replace( '/\.csv$/', '.txt', $name );
 						?>
 						<tr>
-							<td><?php echo esc_html( $name ); ?></td>
+							<td><?php echo esc_html( self::label( $name ) ); ?></td>
 							<td><?php echo esc_html( implode( ', ', $result ) ); ?></td>
 							<td>
-								<a href="<?php echo esc_url( wp_nonce_url( self::url( [ 'download' => $name ] ), 'scm_download' ) ); ?>"><?php esc_html_e( 'CSV', 'khrlzhfr-simple-csv-mailer' ); ?></a>
+								<a href="<?php echo esc_url( wp_nonce_url( self::url( [ 'download' => $name ] ), 'khrlscm_download' ) ); ?>"><?php esc_html_e( 'CSV', 'khrlzhfr-simple-csv-mailer' ); ?></a>
 								<?php if ( self::path( $txt ) ) : ?>
-									| <a href="<?php echo esc_url( wp_nonce_url( self::url( [ 'download' => $txt ] ), 'scm_download' ) ); ?>"><?php esc_html_e( 'Email (txt)', 'khrlzhfr-simple-csv-mailer' ); ?></a>
+									| <a href="<?php echo esc_url( wp_nonce_url( self::url( [ 'download' => $txt ] ), 'khrlscm_download' ) ); ?>"><?php esc_html_e( 'Email (txt)', 'khrlzhfr-simple-csv-mailer' ); ?></a>
 								<?php endif; ?>
 							</td>
-							<td class="scm-actions">
+							<td class="khrlscm-actions">
 								<?php if ( $c['Failed'] ) : ?>
-									<form method="post" class="scm-inline"><?php wp_nonce_field( 'scm_form' ); ?><input type="hidden" name="scm_action" value="retry"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button button-small"><?php esc_html_e( 'Retry failed', 'khrlzhfr-simple-csv-mailer' ); ?></button></form>
+									<form method="post" class="khrlscm-inline"><?php wp_nonce_field( 'khrlscm_form' ); ?><input type="hidden" name="khrlscm_action" value="retry"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button button-small"><?php esc_html_e( 'Retry failed', 'khrlzhfr-simple-csv-mailer' ); ?></button></form>
 								<?php endif; ?>
-								<form method="post" class="scm-inline" onsubmit="return confirm(<?php echo esc_attr( wp_json_encode( __( 'Delete this file and its email record?', 'khrlzhfr-simple-csv-mailer' ) ) ); ?>)"><?php wp_nonce_field( 'scm_form' ); ?><input type="hidden" name="scm_action" value="delete"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button-link button-link-delete"><?php esc_html_e( 'Delete', 'khrlzhfr-simple-csv-mailer' ); ?></button></form>
+								<form method="post" class="khrlscm-inline" onsubmit="return confirm(<?php echo esc_attr( wp_json_encode( __( 'Delete this file and its email record?', 'khrlzhfr-simple-csv-mailer' ) ) ); ?>)"><?php wp_nonce_field( 'khrlscm_form' ); ?><input type="hidden" name="khrlscm_action" value="delete"><input type="hidden" name="file" value="<?php echo esc_attr( $name ); ?>"><button class="button-link button-link-delete"><?php esc_html_e( 'Delete', 'khrlzhfr-simple-csv-mailer' ); ?></button></form>
 							</td>
 						</tr>
 					<?php endforeach; ?>
@@ -1472,15 +1544,15 @@ final class SCM_Mailer {
 
 			<?php if ( self::pending() ) : ?>
 				<form method="post" onsubmit="return confirm(<?php echo esc_attr( wp_json_encode( __( 'Delete this list?', 'khrlzhfr-simple-csv-mailer' ) ) ); ?>)">
-					<?php wp_nonce_field( 'scm_form' ); ?>
-					<input type="hidden" name="scm_action" value="delete">
+					<?php wp_nonce_field( 'khrlscm_form' ); ?>
+					<input type="hidden" name="khrlscm_action" value="delete">
 					<table class="form-table" role="presentation">
 						<tr>
-							<th scope="row"><label for="scm-del"><?php esc_html_e( 'Delete an unsent list', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
+							<th scope="row"><label for="khrlscm-del"><?php esc_html_e( 'Delete an unsent list', 'khrlzhfr-simple-csv-mailer' ); ?></label></th>
 							<td>
-								<select name="file" id="scm-del">
+								<select name="file" id="khrlscm-del">
 									<?php foreach ( array_keys( self::pending() ) as $name ) : ?>
-										<option value="<?php echo esc_attr( $name ); ?>"><?php echo esc_html( $name ); ?></option>
+										<option value="<?php echo esc_attr( $name ); ?>"><?php echo esc_html( self::label( $name ) ); ?></option>
 									<?php endforeach; ?>
 								</select>
 								<button class="button button-link-delete"><?php esc_html_e( 'Delete', 'khrlzhfr-simple-csv-mailer' ); ?></button>
